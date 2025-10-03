@@ -80,6 +80,17 @@ int PDH_baseline() {
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
 */
+// Potential optimizations:
+// Store copy of output historgram in each of the warps' shared memory
+
+// Threads are not in sync at all. Need to figure out way to make all perform roughly same number of work
+// Number of computations range from n to 1
+
+// Going to want to divide distances into sections and figure out how to iterate through
+
+// Threads divide up input into sections and move down each section
+
+
 __global__ void PDH_kernel(atom* dev_atom_list, // Array containing all datapoints
 						   bucket* dev_histogram, // Array of bucket counts
 						   int PDH_acnt, // Number of datapoints
