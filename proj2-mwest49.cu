@@ -110,7 +110,8 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 						   int PDH_acnt, // Number of datapoints
 						   int PDH_res) // Bucket size
 {
-	__shared__ double3 tile[blockDim.x];
+	//__shared__ double3 tile[blockDim.x];
+	__shared__ double3 tile[256];
 
 	// **TODO** Output privitization in shared memory
 
@@ -144,7 +145,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		__syncthreads();
 
 		// **TODO** Balance the intra point distance calculation
-		for (i = threadIdx.x + 1; i < blockDim.x; i++) 
+		for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 		{
 			double dist = euclidDist(localPoint, tile[i]);
 			int bucket = (int) (dist / PDH_res);
