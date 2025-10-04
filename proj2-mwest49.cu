@@ -39,39 +39,39 @@ gpu_atom* gpuAtoms;     /* list of data points in GPU's format      */
 
 
 /* These are for an old way of tracking time */
-struct timezone Idunno;	
+struct timezone Idunno;
 struct timeval startTime, endTime;
 
 
-/* 
-	distance of two points in the atom_list 
+/*
+	distance of two points in the atom_list
 */
 double p2p_distance(int ind1, int ind2) {
-	
+
 	double x1 = atom_list[ind1].x_pos;
 	double x2 = atom_list[ind2].x_pos;
 	double y1 = atom_list[ind1].y_pos;
 	double y2 = atom_list[ind2].y_pos;
 	double z1 = atom_list[ind1].z_pos;
 	double z2 = atom_list[ind2].z_pos;
-		
+
 	return sqrt((x1 - x2)*(x1-x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
 }
 
 
-/* 
-	brute-force SDH solution in a single CPU thread 
+/*
+	brute-force SDH solution in a single CPU thread
 */
 int PDH_baseline() {
 	int i, j, h_pos;
 	double dist;
-	
+
 	for(i = 0; i < PDH_acnt; i++) {
 		for(j = i+1; j < PDH_acnt; j++) {
 			dist = p2p_distance(i,j);
 			h_pos = (int) (dist / PDH_res);
 			histogram[h_pos].d_cnt++;
-		} 
+		}
 	}
 	return 0;
 }
@@ -80,6 +80,17 @@ int PDH_baseline() {
 //##############################################################################
 // GPU Code
 //##############################################################################
+
+__device__ inline double euclidDist(double3 p1, double3 p2)
+{
+	// Component distances between p1 and p2
+	double dx = p1.x - p2.x;
+	double dy = p1.y - p2.y;
+	double dz = p1.z - p2.z;
+
+	// Straight line distance between points
+	return sqrt(dx*dx + dy*dy + dz*dz);
+}
 
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
@@ -94,32 +105,53 @@ int PDH_baseline() {
 
 // Threads divide up input into sections and move down each section
 
-
 __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
 						   bucket* dev_histogram, // Array of bucket counts
 						   int PDH_acnt, // Number of datapoints
-						   int PDH_res) // Bucket size 
+						   int PDH_res) // Bucket size
 {
-	// Check if our current thread index is out of range of the array	
-	int index = (blockDim.x * blockIdx.x) + threadIdx.x;
-	if (index < PDH_acnt) 
-	{
-		// Compute distance between points in the range [index + 1....n]
-		for (int i = index + 1; i < PDH_acnt; i++)
-		{
-			// Compute component distances from point at index to point at i
-			double dx = dev_atom_list[index].x - dev_atom_list[i].x;
-			double dy = dev_atom_list[index].y - dev_atom_list[i].y;
-			double dz = dev_atom_list[index].z - dev_atom_list[i].z;
+	__shared__ double3 tile[blockDim.x];
 
-			// Straight line distance between points
-			double dist = sqrt(dx*dx + dy*dy + dz*dz);
-			
-			// Determine which bucket it should go into
+	// **TODO** Output privitization in shared memory
+
+	// Check if our current thread index is out of range of the array
+	int index = (blockDim.x * blockIdx.x) + threadIdx.x;
+	if (index < PDH_acnt)
+	{
+		// Load this thread's left point into a register
+		double3 localPoint = dev_atom_list[index];
+
+		for (int i = blockIdx.x + 1; i < gridDim.x; i++)
+		{
+			// Load next tile into shared memory
+			tile[threadIdx.x] = dev_atom_list[index];
+			__syncthreads();
+
+			for (int j = 0; j < blockDim.x; j++)
+			{
+				// Straight line distance between points
+				double dist = euclidDist(localPoint, tile[j]);
+				
+				// Determine which bucket it should go into
+				int bucket = (int) (dist / PDH_res);
+
+				atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+			}
+		}
+
+		// Find intra point distances
+		tile[threadIdx.x] = localPoint;
+		__syncthreads();
+
+		// **TODO** Balance the intra point distance calculation
+		for (i = threadIdx.x + 1; i < blockDim.x; i++) 
+		{
+			double dist = euclidDist(localPoint, tile[i]);
 			int bucket = (int) (dist / PDH_res);
-			
+
 			atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
 		}
+		__syncthreads();
 	}
 }
 
@@ -128,15 +160,15 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu(const int blockSize = 256) 
+float PDH_gpu(const int blockSize = 256)
 {
 	const size_t sizeAtomList = sizeof(gpu_atom)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
-	
+
 	// Allocating Memory
 	gpu_atom* dev_atom_list;
 	cudaMalloc((void**) &(dev_atom_list), sizeAtomList);
-	
+
 	// Copying input values to gpu atom list
 	cudaMemcpy(dev_atom_list, gpuAtoms, sizeAtomList, cudaMemcpyHostToDevice);
 
@@ -146,7 +178,7 @@ float PDH_gpu(const int blockSize = 256)
 
 	// Need 1 thread per point
 	const int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
-	
+
 	// Start timing
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
@@ -159,7 +191,7 @@ float PDH_gpu(const int blockSize = 256)
 	// Record end time
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
-	
+
 	// Calculate total time spent computing
 	float elapsedTime;
 	cudaEventElapsedTime(&elapsedTime, start, stop);
@@ -179,8 +211,8 @@ float PDH_gpu(const int blockSize = 256)
 //##############################################################################
 
 
-/* 
-	set a checkpoint and show the (natural) running time in seconds 
+/*
+	set a checkpoint and show the (natural) running time in seconds
 */
 double report_running_time() {
 	long sec_diff, usec_diff;
@@ -203,11 +235,11 @@ double report_gpu_running_time(float elapsedTimeMS) {
 }
 
 
-/* 
-	print the counts in all buckets of the histogram 
+/*
+	print the counts in all buckets of the histogram
 */
 void output_histogram(){
-	int i; 
+	int i;
 	long long total_cnt = 0;
 	for(i=0; i< num_buckets; i++) {
 		if(i%5 == 0) /* we print 5 buckets in a row */
@@ -215,14 +247,14 @@ void output_histogram(){
 		printf("%15lld ", histogram[i].d_cnt);
 		total_cnt += histogram[i].d_cnt;
 	  	/* we also want to make sure the total distance count is correct */
-		if(i == num_buckets - 1)	
+		if(i == num_buckets - 1)
 			printf("\n T:%lld \n", total_cnt);
 		else printf("| ");
 	}
 }
 
 void gpu_output_histogram(){
-	int i; 
+	int i;
 	long long total_cnt = 0;
 	for(i=0; i< num_buckets; i++) {
 		if(i%5 == 0) /* we print 5 buckets in a row */
@@ -230,15 +262,15 @@ void gpu_output_histogram(){
 		printf("%15lld ", gpu_histogram[i].d_cnt);
 		total_cnt += gpu_histogram[i].d_cnt;
 	  	/* we also want to make sure the total distance count is correct */
-		if(i == num_buckets - 1)	
+		if(i == num_buckets - 1)
 			printf("\n T:%lld \n", total_cnt);
 		else printf("| ");
 	}
 }
 
 
-/* 
-	Compute and display the difference between the CPU and GPU histograms 
+/*
+	Compute and display the difference between the CPU and GPU histograms
 */
 void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
     printf("\nDifference between CPU and GPU histograms:");
@@ -268,7 +300,7 @@ int main(int argc, char **argv)
 	gpu_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
-	
+
 	gpuAtoms = (gpu_atom*)malloc(sizeof(gpu_atom)*PDH_acnt);
 
 	srand(1);
@@ -284,13 +316,13 @@ int main(int argc, char **argv)
 	}
 	/* start counting time */
 	gettimeofday(&startTime, &Idunno);
-	
+
 	/* call CPU single thread version to compute the histogram */
 	PDH_baseline();
-	
-	/* check the total running time */ 
+
+	/* check the total running time */
 	report_running_time();
-	
+
 	/* print out the histogram */
 	output_histogram();
 
