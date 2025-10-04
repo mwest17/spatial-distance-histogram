@@ -10,6 +10,8 @@
 #include <math.h>
 #include <sys/time.h>
 
+#include <cuda_runtime.h>
+
 
 #define BOX_SIZE	23000 /* size of the data box on one dimension            */
 
@@ -20,19 +22,21 @@ typedef struct atomdesc {
 	double z_pos;
 } atom;
 
+typedef double3 gpu_atom;
+
 typedef struct hist_entry{
-	//float min;
-	//float max;
 	unsigned long long d_cnt;   /* need a long long type as the count might be huge */
 } bucket;
 
 
-bucket * histogram;		/* list of all buckets in the histogram   */
-bucket* gpu_histogram;  /* GPU output bucket list*/
-long long	PDH_acnt;	/* total number of data points            */
+bucket * histogram;		/* list of all buckets in the histogram     */
+bucket* gpu_histogram;  /* list of all buckets in the GPU histogram */
+long long	PDH_acnt;	/* total number of data points              */
 int num_buckets;		/* total number of buckets in the histogram */
-double   PDH_res;		/* value of w                             */
-atom * atom_list;		/* list of all data points                */
+double   PDH_res;		/* value of w (the width of each bucket)    */
+atom * atom_list;		/* list of all data points                  */
+gpu_atom* gpuAtoms;     /* list of data points in GPU's format      */
+
 
 /* These are for an old way of tracking time */
 struct timezone Idunno;	
@@ -91,7 +95,7 @@ int PDH_baseline() {
 // Threads divide up input into sections and move down each section
 
 
-__global__ void PDH_kernel(atom* dev_atom_list, // Array containing all datapoints
+__global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
 						   bucket* dev_histogram, // Array of bucket counts
 						   int PDH_acnt, // Number of datapoints
 						   int PDH_res) // Bucket size 
@@ -104,9 +108,9 @@ __global__ void PDH_kernel(atom* dev_atom_list, // Array containing all datapoin
 		for (int i = index + 1; i < PDH_acnt; i++)
 		{
 			// Compute component distances from point at index to point at i
-			double dx = dev_atom_list[index].x_pos - dev_atom_list[i].x_pos;
-			double dy = dev_atom_list[index].y_pos - dev_atom_list[i].y_pos;
-			double dz = dev_atom_list[index].z_pos - dev_atom_list[i].z_pos;
+			double dx = dev_atom_list[index].x - dev_atom_list[i].x;
+			double dy = dev_atom_list[index].y - dev_atom_list[i].y;
+			double dz = dev_atom_list[index].z - dev_atom_list[i].z;
 
 			// Straight line distance between points
 			double dist = sqrt(dx*dx + dy*dy + dz*dz);
@@ -124,25 +128,24 @@ __global__ void PDH_kernel(atom* dev_atom_list, // Array containing all datapoin
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu() 
+float PDH_gpu(const int blockSize = 256) 
 {
-	const size_t sizeAtomList = sizeof(atom)*PDH_acnt;
+	const size_t sizeAtomList = sizeof(gpu_atom)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
 	
 	// Allocating Memory
-	atom* dev_atom_list;
-	cudaMalloc((void**) &dev_atom_list, sizeAtomList);
+	gpu_atom* dev_atom_list;
+	cudaMalloc((void**) &(dev_atom_list), sizeAtomList);
+	
+	// Copying input values to gpu atom list
+	cudaMemcpy(dev_atom_list, gpuAtoms, sizeAtomList, cudaMemcpyHostToDevice);
+
 	bucket* dev_histogram;
 	cudaMalloc((void**) &dev_histogram, sizeHistogram);
-
-	// Copying input values to gpu atom list
-	cudaMemcpy(dev_atom_list, atom_list, sizeAtomList, cudaMemcpyHostToDevice);
 	cudaMemset(dev_histogram, 0, sizeHistogram);
 
 	// Need 1 thread per point
-	int threadsPerBlock = 256;
-	int blocksPerGrid = (PDH_acnt + threadsPerBlock - 1) / threadsPerBlock;
-
+	const int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -151,14 +154,18 @@ float PDH_gpu()
 	cudaEventRecord(start, 0);
 
 	// Call kernel function (Passing in the array of data)
-	PDH_kernel<<<blocksPerGrid, threadsPerBlock>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res);
+	PDH_kernel<<<numBlocks, blockSize>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res);
 
+	// Record end time
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
+	
+	// Calculate total time spent computing
 	float elapsedTime;
 	cudaEventElapsedTime(&elapsedTime, start, stop);
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
+
 
 	// Copy output histogram from global to cpu mem
 	cudaMemcpy(gpu_histogram, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
@@ -253,6 +260,7 @@ int main(int argc, char **argv)
 
 	PDH_acnt = atoi(argv[1]);
 	PDH_res	 = atof(argv[2]);
+	// int blockSize = atoi(argv[3]);
 // printf("args are %d and %f\n", PDH_acnt, PDH_res);
 
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
@@ -261,12 +269,18 @@ int main(int argc, char **argv)
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 	
+	gpuAtoms = (gpu_atom*)malloc(sizeof(gpu_atom)*PDH_acnt);
+
 	srand(1);
 	/* generate data following a uniform distribution */
 	for(i = 0;  i < PDH_acnt; i++) {
 		atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
 		atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
 		atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+
+		gpuAtoms[i].x = atom_list[i].x_pos;
+		gpuAtoms[i].y = atom_list[i].y_pos;
+		gpuAtoms[i].z = atom_list[i].z_pos;
 	}
 	/* start counting time */
 	gettimeofday(&startTime, &Idunno);
