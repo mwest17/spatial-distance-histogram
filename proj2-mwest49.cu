@@ -122,8 +122,9 @@ __global__ void PDH_kernel(atom* dev_atom_list, // Array containing all datapoin
 
 /*
 	Wrapper for the PDH gpu kernel function
+	Returns the time taken to run CUDA kernel
 */
-int PDH_gpu() 
+float PDH_gpu() 
 {
 	const size_t sizeAtomList = sizeof(atom)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
@@ -142,8 +143,22 @@ int PDH_gpu()
 	int threadsPerBlock = 256;
 	int blocksPerGrid = (PDH_acnt + threadsPerBlock - 1) / threadsPerBlock;
 
+	
+	// Start timing
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+
 	// Call kernel function (Passing in the array of data)
 	PDH_kernel<<<blocksPerGrid, threadsPerBlock>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res);
+
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	float elapsedTime;
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
 
 	// Copy output histogram from global to cpu mem
 	cudaMemcpy(gpu_histogram, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
@@ -151,7 +166,7 @@ int PDH_gpu()
 	cudaFree(dev_atom_list);
 	cudaFree(dev_histogram);
 
-	return 0;
+	return elapsedTime;
 }
 
 //##############################################################################
@@ -169,21 +184,15 @@ double report_running_time() {
 		sec_diff --;
 		usec_diff += 1000000;
 	}
-	printf("Running time for CPU version: %ld.%06ld\n", sec_diff, usec_diff);
+	printf("\nRunning time for CPU version (in seconds): %ld.%06ld", sec_diff, usec_diff);
 	return (double)(sec_diff*1.0 + usec_diff/1000000.0);
 }
 
-double report_gpu_running_time() {
-	long sec_diff, usec_diff;
-	gettimeofday(&endTime, &Idunno);
-	sec_diff = endTime.tv_sec - startTime.tv_sec;
-	usec_diff= endTime.tv_usec-startTime.tv_usec;
-	if(usec_diff < 0) {
-		sec_diff --;
-		usec_diff += 1000000;
-	}
-	printf("Running time for GPU version: %ld.%06ld\n", sec_diff, usec_diff);
-	return (double)(sec_diff*1.0 + usec_diff/1000000.0);
+double report_gpu_running_time(float elapsedTimeMS) {
+	// Convert miliseconds to seconds
+	double elapsedTimeS = elapsedTimeMS / 1000.0;
+	printf("\nRunning time for GPU version (in seconds): %lf", elapsedTimeS);
+	return elapsedTimeS;
 }
 
 
@@ -225,7 +234,7 @@ void gpu_output_histogram(){
 	Compute and display the difference between the CPU and GPU histograms 
 */
 void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
-    printf("\nDifference between CPU and GPU histograms:\n");
+    printf("\nDifference between CPU and GPU histograms:");
     for (int i = 0; i < num_buckets; i++) {
         long long diff = cpu_hist[i].d_cnt - gpu_hist[i].d_cnt;
         if (i % 5 == 0)
@@ -272,11 +281,9 @@ int main(int argc, char **argv)
 	output_histogram();
 
 	/* Computing histograms on GPU */
-	gettimeofday(&startTime, &Idunno);
+	float elapsedTime = PDH_gpu();
 
-	PDH_gpu();
-
-	report_gpu_running_time();
+	report_gpu_running_time(elapsedTime);
 
 	gpu_output_histogram();
 
