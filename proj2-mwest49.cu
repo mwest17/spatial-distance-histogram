@@ -112,7 +112,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 					  int num_buckets)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
-	__shared__ gpu_atom tile[1024];
+	__shared__ gpu_atom tile[256];
 
 	// **TODO** Create multiple output arrays per block (to decrease conflicts within warp)
 	extern __shared__ bucket sharedMemory[];
@@ -122,8 +122,15 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	// bucket* localHist = sharedMemory + histIndex * num_buckets;
 	bucket* localHist = sharedMemory;
 
+	// Initialize local histogram to 0
+	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	{
+		localHist[i].d_cnt = 0;
+	}
+
+
 	// Check if our current thread index is out of range of the array
-	int index = (blockDim.x * blockIdx.x) + threadIdx.x;
+	unsigned long long int index = (blockDim.x * blockIdx.x) + threadIdx.x;
 	if (index < PDH_acnt)
 	{
 		// Load this thread's left point into a register
@@ -142,7 +149,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 			// Find distance from thread's point to all points in tile
 			for (int i = 0; i < blockDim.x; i++)
 			{	
-				int ind = (blockDim.x * tileInd) + i;
+				unsigned long long int ind = (blockDim.x * tileInd) + i;
 				if (ind < PDH_acnt) {
 					// Straight line distance between points
 					double dist = euclidDist(localPoint, tile[i]);
@@ -165,13 +172,12 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		// **TODO** Balance the intra point distance calculation
 		for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 		{
-			int ind = (blockDim.x * blockIdx.x) + i;
+			unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
 			if (ind < PDH_acnt)
 			{
 				double dist = euclidDist(localPoint, tile[i]);
 				int bucket = (int) (dist / PDH_res);
 
-				atomicAdd(&(dev_histogram[blockIdx.x * num_buckets + bucket].d_cnt), (unsigned long long) 1); // BUT WHY?????
 				atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
 			}
 		}
@@ -190,7 +196,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu(const int blockSize = 1024)
+float PDH_gpu(const unsigned int blockSize = 256)
 {
 	const size_t sizeAtomList = sizeof(gpu_atom)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
@@ -204,7 +210,7 @@ float PDH_gpu(const int blockSize = 1024)
 
 
 	// Need 1 thread per point
-	const int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
+	const unsigned long long int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 
 	bucket* dev_histogram;
 	cudaMalloc((void**) &dev_histogram, sizeHistogram * numBlocks);
@@ -225,7 +231,6 @@ float PDH_gpu(const int blockSize = 1024)
 	// shuffle based tiling would solve blockSize
 
 	// **TODO** Need to ensure that amount of shared memory is less than max
-	// **TODO** Figure out why too many blocks causes issues
 	PDH_kernel<<<numBlocks, blockSize, sizeHistogram>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
 
 	// Record end time
@@ -243,7 +248,7 @@ float PDH_gpu(const int blockSize = 1024)
 	// Copy output histogram from global to cpu mem
 	cudaMemcpy(output, dev_histogram, sizeHistogram * numBlocks, cudaMemcpyDeviceToHost);
 	
-	// Will need to parallelize this with a reduction kernel:
+	// **TODO** Will need to parallelize this with a reduction kernel:
 	for (int i = 0; i < numBlocks; i++)
 	{
 		for (int j = 0; j < num_buckets; j++)
