@@ -112,7 +112,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 					  int num_buckets)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
-	__shared__ gpu_atom tile[256];
+	__shared__ gpu_atom tile[1024];
 
 	// **TODO** Create multiple output arrays per block (to decrease conflicts within warp)
 	extern __shared__ bucket sharedMemory[];
@@ -190,7 +190,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu(const int blockSize = 256)
+float PDH_gpu(const int blockSize = 1024)
 {
 	const size_t sizeAtomList = sizeof(gpu_atom)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
@@ -225,6 +225,7 @@ float PDH_gpu(const int blockSize = 256)
 	// shuffle based tiling would solve blockSize
 
 	// **TODO** Need to ensure that amount of shared memory is less than max
+	// **TODO** Figure out why too many blocks causes issues
 	PDH_kernel<<<numBlocks, blockSize, sizeHistogram>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
 
 	// Record end time
