@@ -106,14 +106,21 @@ __device__ inline double euclidDist(double3 p1, double3 p2)
 // Threads divide up input into sections and move down each section
 
 __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
-						   bucket* dev_histogram, // Array of bucket counts
-						   int PDH_acnt, // Number of datapoints
-						   int PDH_res) // Bucket size
+					  bucket* dev_histogram, // Array of bucket counts
+					  int PDH_acnt, // Number of datapoints
+					  int PDH_res, // Bucket size
+					  int num_buckets)
 {
-	//__shared__ double3 tile[blockDim.x];
-	__shared__ double3 tile[256];
+	// I think I'm going to want to swtich this to shuffle based tiling
+	__shared__ gpu_atom tile[256];
 
-	// **TODO** Output privitization in shared memory
+	// **TODO** Create multiple output arrays per block (to decrease conflicts within warp)
+	extern __shared__ bucket sharedMemory[];
+
+	// int warpOffset = threadIdx.x & 0x1f;
+	// int histIndex = warpOffset / 2;
+	// bucket* localHist = sharedMemory + histIndex * num_buckets;
+	bucket* localHist = sharedMemory;
 
 	// Check if our current thread index is out of range of the array
 	int index = (blockDim.x * blockIdx.x) + threadIdx.x;
@@ -143,17 +150,18 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 					// Determine which bucket it should go into
 					int bucket = (int) (dist / PDH_res);
 
-					atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+					atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
 				}
 			}
 			__syncthreads();
 			
 		}
 
-		// Find intra point distances
+		// Every thread store its assigned point into tile
 		tile[threadIdx.x] = localPoint;
 		__syncthreads();
 
+		// Find intra point distances
 		// **TODO** Balance the intra point distance calculation
 		for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 		{
@@ -163,10 +171,17 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 				double dist = euclidDist(localPoint, tile[i]);
 				int bucket = (int) (dist / PDH_res);
 
-				atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+				atomicAdd(&(dev_histogram[blockIdx.x * num_buckets + bucket].d_cnt), (unsigned long long) 1); // BUT WHY?????
+				atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
 			}
 		}
 		__syncthreads();
+
+		// Copy local output to global memory
+		for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+		{
+			dev_histogram[blockIdx.x * num_buckets + i].d_cnt = localHist[i].d_cnt;
+		}
 	}
 }
 
@@ -187,13 +202,15 @@ float PDH_gpu(const int blockSize = 256)
 	// Copying input values to gpu atom list
 	cudaMemcpy(dev_atom_list, gpuAtoms, sizeAtomList, cudaMemcpyHostToDevice);
 
-	bucket* dev_histogram;
-	cudaMalloc((void**) &dev_histogram, sizeHistogram);
-	cudaMemset(dev_histogram, 0, sizeHistogram);
 
 	// Need 1 thread per point
 	const int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 
+	bucket* dev_histogram;
+	cudaMalloc((void**) &dev_histogram, sizeHistogram * numBlocks);
+	cudaMemset(dev_histogram, 0, sizeHistogram * numBlocks);
+
+	
 	// Start timing
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
@@ -201,7 +218,14 @@ float PDH_gpu(const int blockSize = 256)
 	cudaEventRecord(start, 0);
 
 	// Call kernel function (Passing in the array of data)
-	PDH_kernel<<<numBlocks, blockSize>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res);
+	// Can check max size of shared with cudaDeviceGetAttribute
+	// Can set max size of shared with cudaFuncSetAttribute
+
+	// Both the blockSize and the sizeHistogram are user defined
+	// shuffle based tiling would solve blockSize
+
+	// **TODO** Need to ensure that amount of shared memory is less than max
+	PDH_kernel<<<numBlocks, blockSize, sizeHistogram>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
 
 	// Record end time
 	cudaEventRecord(stop, 0);
@@ -213,10 +237,21 @@ float PDH_gpu(const int blockSize = 256)
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
 
+	bucket* output = (bucket*)malloc(sizeHistogram * numBlocks);
 
 	// Copy output histogram from global to cpu mem
-	cudaMemcpy(gpu_histogram, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
+	cudaMemcpy(output, dev_histogram, sizeHistogram * numBlocks, cudaMemcpyDeviceToHost);
+	
+	// Will need to parallelize this with a reduction kernel:
+	for (int i = 0; i < numBlocks; i++)
+	{
+		for (int j = 0; j < num_buckets; j++)
+		{
+			gpu_histogram[j].d_cnt += output[i*num_buckets + j].d_cnt;
+		}
+	}
 
+	free(output);
 	cudaFree(dev_atom_list);
 	cudaFree(dev_histogram);
 
@@ -313,6 +348,7 @@ int main(int argc, char **argv)
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
 	histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
 	gpu_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
+	memset((void*)gpu_histogram, 0, sizeof(bucket)*num_buckets);
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
