@@ -122,22 +122,32 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		// Load this thread's left point into a register
 		double3 localPoint = dev_atom_list[index];
 
-		for (int i = blockIdx.x + 1; i < gridDim.x; i++)
+		for (int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
 		{
 			// Load next tile into shared memory
-			tile[threadIdx.x] = dev_atom_list[index];
+			int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
+			if (tileIndex < PDH_acnt)
+			{
+				tile[threadIdx.x] = dev_atom_list[tileIndex];
+			}	
 			__syncthreads();
 
-			for (int j = 0; j < blockDim.x; j++)
-			{
-				// Straight line distance between points
-				double dist = euclidDist(localPoint, tile[j]);
+			// Find distance from thread's point to all points in tile
+			for (int i = 0; i < blockDim.x; i++)
+			{	
+				int ind = (blockDim.x * tileInd) + i;
+				if (ind < PDH_acnt) {
+					// Straight line distance between points
+					double dist = euclidDist(localPoint, tile[i]);
 				
-				// Determine which bucket it should go into
-				int bucket = (int) (dist / PDH_res);
+					// Determine which bucket it should go into
+					int bucket = (int) (dist / PDH_res);
 
-				atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+					atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+				}
 			}
+			__syncthreads();
+			
 		}
 
 		// Find intra point distances
@@ -147,10 +157,14 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		// **TODO** Balance the intra point distance calculation
 		for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 		{
-			double dist = euclidDist(localPoint, tile[i]);
-			int bucket = (int) (dist / PDH_res);
+			int ind = (blockDim.x * blockIdx.x) + i;
+			if (ind < PDH_acnt)
+			{
+				double dist = euclidDist(localPoint, tile[i]);
+				int bucket = (int) (dist / PDH_res);
 
-			atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+				atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+			}
 		}
 		__syncthreads();
 	}
