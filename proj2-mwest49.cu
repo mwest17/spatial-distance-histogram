@@ -95,42 +95,31 @@ __device__ inline double euclidDist(double3 p1, double3 p2)
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
 */
-// Potential optimizations:
-// Store copy of output historgram in each of the warps' shared memory
-
-// Threads are not in sync at all. Need to figure out way to make all perform roughly same number of work
-// Number of computations range from n to 1
-
-// Going to want to divide distances into sections and figure out how to iterate through
-
-// Threads divide up input into sections and move down each section
-
 __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
 					  bucket* dev_histogram, // Array of bucket counts
-					  int PDH_acnt, // Number of datapoints
-					  int PDH_res, // Bucket size
-					  int num_buckets)
+					  const int PDH_acnt, // Number of datapoints
+					  const int PDH_res, // Bucket size
+					  const int num_buckets,
+					  const int numHistograms = 2)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
 	__shared__ gpu_atom tile[256];
 
-	// **TODO** Create multiple output arrays per block (to decrease conflicts within warp)
 	extern __shared__ bucket sharedMemory[];
 
-	// int warpOffset = threadIdx.x & 0x1f;
-	// int histIndex = warpOffset / 2;
-	// bucket* localHist = sharedMemory + histIndex * num_buckets;
+	int warpOffset = threadIdx.x & 0x1f;
+	int histOffset = num_buckets*(warpOffset % numHistograms);
 	bucket* localHist = sharedMemory;
 
 	// Initialize local histogram to 0
-	for (unsigned i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	for (unsigned i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
 	{
 		localHist[i].d_cnt = 0;
 	}
 
-
 	// Check if our current thread index is out of range of the array
 	unsigned long long int index = (blockDim.x * blockIdx.x) + threadIdx.x;
+	
 	// Load this thread's left point into a register
 	gpu_atom localPoint;
 	if (index < PDH_acnt) {
@@ -161,7 +150,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 				// Determine which bucket it should go into
 				int bucket = (int) (dist / PDH_res);
 				
-				atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
+				atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 			}
 		}
 		__syncthreads();
@@ -182,16 +171,16 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 			double dist = euclidDist(localPoint, tile[i]);
 			int bucket = (int) (dist / PDH_res);
 
-			atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
+			atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 		}
 	}
 	__syncthreads();
 
 	// Copy local output to global memory
-	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	for (int i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
 	{
-		// Maybe copy to global then perform a faster tree based reduction algorithm
-		atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
+		// **TODO** Use a faster tree based reduction algorithm
+		atomicAdd(&(dev_histogram[i % num_buckets].d_cnt), (unsigned long long) localHist[i].d_cnt);
 	}
 }
 
@@ -212,13 +201,15 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	// Copying input values to gpu atom list
 	cudaMemcpy(dev_atom_list, gpuAtoms, sizeAtomList, cudaMemcpyHostToDevice);
 
-
 	// Need 1 thread per point
 	const unsigned long long int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 
 	bucket* dev_histogram;
 	cudaMalloc((void**) &dev_histogram, sizeHistogram);
 	cudaMemset(dev_histogram, 0, sizeHistogram);
+
+	// Calculate our k value
+	//exp()
 
 	
 	// Start timing
@@ -227,7 +218,6 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 
-	// Call kernel function (Passing in the array of data)
 	// Can check max size of shared with cudaDeviceGetAttribute
 	// Can set max size of shared with cudaFuncSetAttribute
 
@@ -235,7 +225,7 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	// shuffle based tiling would solve blockSize
 
 	// **TODO** Need to ensure that amount of shared memory is less than max
-	PDH_kernel<<<numBlocks, blockSize, sizeHistogram>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
+	PDH_kernel<<<numBlocks, blockSize, sizeHistogram*2>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
 
 	// Record end time
 	cudaEventRecord(stop, 0);
@@ -345,7 +335,6 @@ int main(int argc, char **argv)
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
 	histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
 	gpu_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
-	memset((void*)gpu_histogram, 0, sizeof(bucket)*num_buckets);
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
