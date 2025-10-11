@@ -123,7 +123,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	bucket* localHist = sharedMemory;
 
 	// Initialize local histogram to 0
-	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	for (unsigned i = threadIdx.x; i < num_buckets; i += blockDim.x)
 	{
 		localHist[i].d_cnt = 0;
 	}
@@ -131,63 +131,67 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 
 	// Check if our current thread index is out of range of the array
 	unsigned long long int index = (blockDim.x * blockIdx.x) + threadIdx.x;
-	if (index < PDH_acnt)
+	// Load this thread's left point into a register
+	gpu_atom localPoint;
+	if (index < PDH_acnt) {
+		localPoint = dev_atom_list[index];
+	}
+	else {
+		localPoint.x = 0; localPoint.y = 0; localPoint.z = 0;
+	}
+
+	for (unsigned long int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
 	{
-		// Load this thread's left point into a register
-		double3 localPoint = dev_atom_list[index];
-
-		for (int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
+		// Load next tile into shared memory
+		unsigned long int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
+		if (tileIndex < PDH_acnt)
 		{
-			// Load next tile into shared memory
-			int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
-			if (tileIndex < PDH_acnt)
-			{
-				tile[threadIdx.x] = dev_atom_list[tileIndex];
-			}	
-			__syncthreads();
-
-			// Find distance from thread's point to all points in tile
-			for (int i = 0; i < blockDim.x; i++)
-			{	
-				unsigned long long int ind = (blockDim.x * tileInd) + i;
-				if (ind < PDH_acnt) {
-					// Straight line distance between points
-					double dist = euclidDist(localPoint, tile[i]);
-				
-					// Determine which bucket it should go into
-					int bucket = (int) (dist / PDH_res);
-
-					atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
-				}
-			}
-			__syncthreads();
-			
-		}
-
-		// Every thread store its assigned point into tile
-		tile[threadIdx.x] = localPoint;
+			tile[threadIdx.x] = dev_atom_list[tileIndex];
+		}	
 		__syncthreads();
 
-		// Find intra point distances
-		// **TODO** Balance the intra point distance calculation
-		for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
-		{
-			unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
-			if (ind < PDH_acnt)
-			{
+		// Find distance from thread's point to all points in tile
+		for (int i = 0; i < blockDim.x; i++)
+		{	
+			unsigned long long int ind = (blockDim.x * tileInd) + i;
+			if (ind < PDH_acnt) {
+				// Straight line distance between points
 				double dist = euclidDist(localPoint, tile[i]);
+			
+				// Determine which bucket it should go into
 				int bucket = (int) (dist / PDH_res);
-
+				
 				atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
 			}
 		}
 		__syncthreads();
+		
+	}
 
-		// Copy local output to global memory
-		for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	// Every thread store its assigned point into tile
+	tile[threadIdx.x] = localPoint;
+	__syncthreads();
+
+	// Find intra point distances
+	// **TODO** Balance the intra point distance calculation
+	for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
+	{
+		unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
+		if (ind < PDH_acnt)
 		{
-			dev_histogram[blockIdx.x * num_buckets + i].d_cnt = localHist[i].d_cnt;
+			double dist = euclidDist(localPoint, tile[i]);
+			int bucket = (int) (dist / PDH_res);
+
+			atomicAdd(&(localHist[bucket].d_cnt), (unsigned long long) 1);
 		}
+	}
+	__syncthreads();
+
+	// Copy local output to global memory
+	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
+	{
+		// Maybe copy to global then perform a faster tree based reduction algorithm
+		atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
 	}
 }
 
@@ -213,8 +217,8 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	const unsigned long long int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 
 	bucket* dev_histogram;
-	cudaMalloc((void**) &dev_histogram, sizeHistogram * numBlocks);
-	cudaMemset(dev_histogram, 0, sizeHistogram * numBlocks);
+	cudaMalloc((void**) &dev_histogram, sizeHistogram);
+	cudaMemset(dev_histogram, 0, sizeHistogram);
 
 	
 	// Start timing
@@ -243,21 +247,8 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
 
-	bucket* output = (bucket*)malloc(sizeHistogram * numBlocks);
-
 	// Copy output histogram from global to cpu mem
-	cudaMemcpy(output, dev_histogram, sizeHistogram * numBlocks, cudaMemcpyDeviceToHost);
-	
-	// **TODO** Will need to parallelize this with a reduction kernel:
-	for (int i = 0; i < numBlocks; i++)
-	{
-		for (int j = 0; j < num_buckets; j++)
-		{
-			gpu_histogram[j].d_cnt += output[i*num_buckets + j].d_cnt;
-		}
-	}
-
-	free(output);
+	cudaMemcpy(gpu_histogram, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
 	cudaFree(dev_atom_list);
 	cudaFree(dev_histogram);
 
