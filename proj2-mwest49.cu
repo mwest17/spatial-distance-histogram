@@ -10,8 +10,6 @@
 #include <math.h>
 #include <sys/time.h>
 
-#include <cuda_runtime.h>
-
 
 #define BOX_SIZE	23000 /* size of the data box on one dimension            */
 
@@ -209,8 +207,20 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	cudaMemset(dev_histogram, 0, sizeHistogram);
 
 	// Calculate our k value
-	//exp()
-
+	printf("Size of the histogram: %ld\n", sizeHistogram);
+	double maxVal = 0;
+	int maxk = 32;
+	for (int i = 1; i <= 32; i++)
+	{
+		double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
+		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - blockSize)) {
+			maxVal = pk;
+			maxk = i;
+		}
+	}
+	int numHistograms = 32 / maxk;
+	// Seems to always be the max number we can make. Why wouldn't we just do that?
+	printf("Num hist: %d, K: %d", numHistograms, maxk);
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -225,7 +235,8 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	// shuffle based tiling would solve blockSize
 
 	// **TODO** Need to ensure that amount of shared memory is less than max
-	PDH_kernel<<<numBlocks, blockSize, sizeHistogram*2>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets);
+	PDH_kernel<<<numBlocks, blockSize, sizeHistogram*numHistograms>>>
+		(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets, numHistograms);
 
 	// Record end time
 	cudaEventRecord(stop, 0);
