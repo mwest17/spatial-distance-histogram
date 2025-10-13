@@ -93,6 +93,9 @@ __device__ inline double euclidDist(double3 p1, double3 p2)
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
 */
+// **TODO** Need to change from array of structs to arrays for each coordinates
+// **TODO** Need to figure out how to do this:
+	// Moreover, we vectorize each dimension array by loading multiple floating point coordinate values in one data transmission unit
 __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
 					  bucket* dev_histogram, // Array of bucket counts
 					  const int PDH_acnt, // Number of datapoints
@@ -127,6 +130,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		localPoint.x = 0; localPoint.y = 0; localPoint.z = 0;
 	}
 
+	// **TODO, need to figure out if I need to load balance the tile distribution
 	for (unsigned long int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
 	{
 		// Load next tile into shared memory
@@ -161,14 +165,15 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 
 	// Find intra point distances
 	// **TODO** Balance the intra point distance calculation
-	for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
+	for (int i = 1; i <= blockDim.x / 2; i++) 
 	{
-		unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
-		if (ind < PDH_acnt)
+		int tileIndex = (threadIdx.x + i) % blockDim.x;
+		unsigned long long int ind = (blockDim.x * blockIdx.x) + tileIndex; //(blockDim.x * blockIdx.x) + ((threadIdx.x + i) % blockDim.x);
+		if (ind < PDH_acnt && (i <= blockDim.x / 2 - 1 || threadIdx.x <= (blockDim.x / 2)))
 		{
-			double dist = euclidDist(localPoint, tile[i]);
+			double dist = euclidDist(localPoint, tile[tileIndex]);
+			// if (dist == 0) continue; // Somehow we are computing distance between our point and our point again
 			int bucket = (int) (dist / PDH_res);
-
 			atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 		}
 	}
