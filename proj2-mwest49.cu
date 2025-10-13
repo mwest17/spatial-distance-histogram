@@ -20,7 +20,13 @@ typedef struct atomdesc {
 	double z_pos;
 } atom;
 
-typedef double3 gpu_atom;
+// typedef double3 gpu_atom;
+
+typedef struct atomdesc_gpu{ 
+	double* x;
+	double* y;
+	double* z;
+} gpu_atom;
 
 typedef struct hist_entry{
 	unsigned long long d_cnt;   /* need a long long type as the count might be huge */
@@ -33,7 +39,7 @@ long long	PDH_acnt;	/* total number of data points              */
 int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w (the width of each bucket)    */
 atom * atom_list;		/* list of all data points                  */
-gpu_atom* gpuAtoms;     /* list of data points in GPU's format      */
+gpu_atom gpuAtoms;      /* list of data points in GPU's format      */
 
 
 /* These are for an old way of tracking time */
@@ -96,7 +102,7 @@ __device__ inline double euclidDist(double3 p1, double3 p2)
 // **TODO** Need to change from array of structs to arrays for each coordinates
 // **TODO** Need to figure out how to do this:
 	// Moreover, we vectorize each dimension array by loading multiple floating point coordinate values in one data transmission unit
-__global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all datapoints
+__global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datapoints
 					  bucket* dev_histogram, // Array of bucket counts
 					  const int PDH_acnt, // Number of datapoints
 					  const int PDH_res, // Bucket size
@@ -104,7 +110,7 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 					  const int numHistograms = 2)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
-	__shared__ gpu_atom tile[256];
+	__shared__ double3 tile[256];
 
 	extern __shared__ bucket sharedMemory[];
 
@@ -122,9 +128,11 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 	unsigned long long int index = (blockDim.x * blockIdx.x) + threadIdx.x;
 	
 	// Load this thread's left point into a register
-	gpu_atom localPoint;
+	double3 localPoint;
 	if (index < PDH_acnt) {
-		localPoint = dev_atom_list[index];
+		localPoint.x = dev_atom_list.x[index];
+		localPoint.y = dev_atom_list.y[index];
+		localPoint.z = dev_atom_list.z[index];
 	}
 	else {
 		localPoint.x = 0; localPoint.y = 0; localPoint.z = 0;
@@ -137,7 +145,9 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 		unsigned long int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
 		if (tileIndex < PDH_acnt)
 		{
-			tile[threadIdx.x] = dev_atom_list[tileIndex];
+			tile[threadIdx.x].x = dev_atom_list.x[tileIndex];
+			tile[threadIdx.x].y = dev_atom_list.y[tileIndex];
+			tile[threadIdx.x].z = dev_atom_list.z[tileIndex];
 		}	
 		__syncthreads();
 
@@ -194,15 +204,19 @@ __global__ void PDH_kernel(gpu_atom* dev_atom_list, // Array containing all data
 */
 float PDH_gpu(const unsigned int blockSize = 256)
 {
-	const size_t sizeAtomList = sizeof(gpu_atom)*PDH_acnt;
+	const size_t sizeAtomList = sizeof(double)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
 
 	// Allocating Memory
-	gpu_atom* dev_atom_list;
-	cudaMalloc((void**) &(dev_atom_list), sizeAtomList);
+	gpu_atom dev_atom_list;
+	cudaMalloc((void**) &(dev_atom_list.x), sizeAtomList);
+	cudaMalloc((void**) &(dev_atom_list.y), sizeAtomList);
+	cudaMalloc((void**) &(dev_atom_list.z), sizeAtomList);
 
 	// Copying input values to gpu atom list
-	cudaMemcpy(dev_atom_list, gpuAtoms, sizeAtomList, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_atom_list.x, gpuAtoms.x, sizeAtomList, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_atom_list.y, gpuAtoms.y, sizeAtomList, cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_atom_list.z, gpuAtoms.z, sizeAtomList, cudaMemcpyHostToDevice);
 
 	// Need 1 thread per point
 	const unsigned long long int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
@@ -218,13 +232,13 @@ float PDH_gpu(const unsigned int blockSize = 256)
 	for (int i = 1; i <= 32; i++)
 	{
 		double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
-		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - blockSize)) {
+		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
 			maxVal = pk;
 			maxk = i;
 		}
 	}
 	int numHistograms = 32 / maxk;
-	// Seems to always be the max number we can make. Why wouldn't we just do that?
+	// **TODO** Seems to always be the max number we can make. Why wouldn't we just do that?
 	printf("Num hist: %d, K: %d", numHistograms, maxk);
 	
 	// Start timing
@@ -255,7 +269,9 @@ float PDH_gpu(const unsigned int blockSize = 256)
 
 	// Copy output histogram from global to cpu mem
 	cudaMemcpy(gpu_histogram, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
-	cudaFree(dev_atom_list);
+	cudaFree(dev_atom_list.x);
+	cudaFree(dev_atom_list.y);
+	cudaFree(dev_atom_list.z);
 	cudaFree(dev_histogram);
 
 	return elapsedTime;
@@ -354,18 +370,16 @@ int main(int argc, char **argv)
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
-	gpuAtoms = (gpu_atom*)malloc(sizeof(gpu_atom)*PDH_acnt);
+	gpuAtoms.x = (double*)malloc(sizeof(double)*PDH_acnt);
+	gpuAtoms.y = (double*)malloc(sizeof(double)*PDH_acnt);
+	gpuAtoms.z = (double*)malloc(sizeof(double)*PDH_acnt);
 
 	srand(1);
 	/* generate data following a uniform distribution */
 	for(i = 0;  i < PDH_acnt; i++) {
-		atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-
-		gpuAtoms[i].x = atom_list[i].x_pos;
-		gpuAtoms[i].y = atom_list[i].y_pos;
-		gpuAtoms[i].z = atom_list[i].z_pos;
+		gpuAtoms.x[i] = atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		gpuAtoms.y[i] = atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		gpuAtoms.z[i] = atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
 	}
 	/* start counting time */
 	gettimeofday(&startTime, &Idunno);
