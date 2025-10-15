@@ -145,6 +145,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		unsigned long int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
 		if (tileIndex < PDH_acnt)
 		{
+			// **TODO** Coalesce tile accesses??
 			tile[threadIdx.x].x = dev_atom_list.x[tileIndex];
 			tile[threadIdx.x].y = dev_atom_list.y[tileIndex];
 			tile[threadIdx.x].z = dev_atom_list.z[tileIndex];
@@ -175,18 +176,33 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 
 	// Find intra point distances
 	// **TODO** Balance the intra point distance calculation
-	for (int i = 1; i <= blockDim.x / 2; i++) 
+	// Balancing is causing some histogram blocks to count more. Almost all is clustered in specific ones. 
+	// We myst be iterating too many times.
+	// for (int i = 1; i <= blockDim.x / 2; i++) 
+	// {
+	// 	int tileIndex = (threadIdx.x + i) % blockDim.x;
+	// 	unsigned long long int ind = (blockDim.x * blockIdx.x) + tileIndex;
+	// 	if (ind < PDH_acnt && (i <= blockDim.x / 2 - 1 || threadIdx.x < (blockDim.x / 2)))
+	// 	{
+	// 		double dist = euclidDist(localPoint, tile[tileIndex]);
+	// 		int bucket = (int) (dist / PDH_res);
+	// 		atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
+	// 	}
+	// }
+
+	for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 	{
-		int tileIndex = (threadIdx.x + i) % blockDim.x;
-		unsigned long long int ind = (blockDim.x * blockIdx.x) + tileIndex; //(blockDim.x * blockIdx.x) + ((threadIdx.x + i) % blockDim.x);
-		if (ind < PDH_acnt && (i <= blockDim.x / 2 - 1 || threadIdx.x <= (blockDim.x / 2)))
+		unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
+
+		if (ind < PDH_acnt)
 		{
-			double dist = euclidDist(localPoint, tile[tileIndex]);
-			// if (dist == 0) continue; // Somehow we are computing distance between our point and our point again
+			double dist = euclidDist(localPoint, tile[i]);
 			int bucket = (int) (dist / PDH_res);
+
 			atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 		}
 	}
+
 	__syncthreads();
 
 	// Copy local output to global memory
