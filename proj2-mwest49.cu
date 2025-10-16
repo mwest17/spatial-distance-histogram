@@ -107,7 +107,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 					  const int PDH_acnt, // Number of datapoints
 					  const int PDH_res, // Bucket size
 					  const int num_buckets,
-					  const int numHistograms = 2)
+					  const int numHistograms)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
 	__shared__ double3 tile[64];
@@ -206,14 +206,27 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	__syncthreads();
 
 	// Merge local histograms into 1
+	// Every thread is assigned a histogram copy. So all are responsible for something
+	// Maybe just copy all into global then reduce in a seperate kernel
 	
-	// Merge unified local into global
+	for (unsigned int curBucket = 0; curBucket < num_buckets; curBucket++)
+	{
+		for (unsigned int stride = numHistograms/2; stride > 0; stride /= 2) 
+		{
+			if (threadIdx.x < stride)
+			{
+				localHist[curBucket + num_buckets*threadIdx.x].d_cnt += localHist[curBucket + num_buckets*threadIdx.x + stride*num_buckets].d_cnt; 
+			}
+			__syncthreads();
+		}
+	}
+
 
 	// Copy local output to global memory
-	for (int i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
+	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
 	{
 		// **TODO** Use a faster tree based reduction algorithm
-		atomicAdd(&(dev_histogram[i % num_buckets].d_cnt), (unsigned long long) localHist[i].d_cnt);
+		atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
 	}
 }
 
