@@ -110,7 +110,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 					  const int numHistograms = 2)
 {
 	// I think I'm going to want to swtich this to shuffle based tiling
-	__shared__ double3 tile[256];
+	__shared__ double3 tile[64];
 
 	extern __shared__ bucket sharedMemory[];
 
@@ -205,6 +205,10 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 
 	__syncthreads();
 
+	// Merge local histograms into 1
+	
+	// Merge unified local into global
+
 	// Copy local output to global memory
 	for (int i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
 	{
@@ -218,7 +222,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu(const unsigned int blockSize = 256)
+float PDH_gpu(const unsigned int blockSize = 64)
 {
 	const size_t sizeAtomList = sizeof(double)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
