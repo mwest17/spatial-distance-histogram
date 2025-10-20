@@ -235,7 +235,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	Wrapper for the PDH gpu kernel function
 	Returns the time taken to run CUDA kernel
 */
-float PDH_gpu(const unsigned int blockSize = 64)
+float PDH_gpu(int numHistograms = 1, const unsigned int blockSize = 64)
 {
 	const size_t sizeAtomList = sizeof(double)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
@@ -259,20 +259,20 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	cudaMemset(dev_histogram, 0, sizeHistogram);
 
 	// Calculate our k value
-	printf("Size of the histogram: %ld\n", sizeHistogram);
-	double maxVal = 0;
-	int maxk = 32;
-	for (int i = 1; i <= 32; i++)
-	{
-		double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
-		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
-			maxVal = pk;
-			maxk = i;
-		}
-	}
-	int numHistograms = 32 / maxk;
+	// printf("Size of the histogram: %ld\n", sizeHistogram);
+	// double maxVal = 0;
+	// int maxk = 32;
+	// for (int i = 1; i <= 32; i++)
+	// {
+	// 	double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
+	// 	if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
+	// 		maxVal = pk;
+	// 		maxk = i;
+	// 	}
+	// }
+	// int numHistograms = 1;//32 / maxk;
 	// **TODO** Seems to always be the max number we can make. Why wouldn't we just do that?
-	printf("Num hist: %d, K: %d", numHistograms, maxk);
+	printf("\nNum hist: %d", numHistograms);
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -426,12 +426,22 @@ int main(int argc, char **argv)
 	/* print out the histogram */
 	output_histogram();
 
-	/* Computing histograms on GPU */
-	float elapsedTime = PDH_gpu();
+	float mintime = 100;
+	int minI = 0;
+	for (i = 1; i <= 32; i++) 
+	{
+		/* Computing histograms on GPU */
+		float elapsedTime = PDH_gpu(i);
 
-	report_gpu_running_time(elapsedTime);
+		report_gpu_running_time(elapsedTime);
+		if (mintime > elapsedTime) {
+			mintime = elapsedTime;
+			minI = i;
+		}
+	}
 
-	gpu_output_histogram();
+	printf("\nminTime: %f, minI: %d", mintime, minI);
+	// gpu_output_histogram();
 
 	/* Compare histograms between cpu and gpu */
 	compare_histograms(histogram, gpu_histogram);
