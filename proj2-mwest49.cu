@@ -32,6 +32,10 @@ typedef struct hist_entry{
 	unsigned long long d_cnt;   /* need a long long type as the count might be huge */
 } bucket;
 
+typedef struct gpu_hist_entry{
+	unsigned long d_cnt;
+} gpu_bucket;
+
 
 bucket * histogram;		/* list of all buckets in the histogram     */
 bucket* gpu_histogram;  /* list of all buckets in the GPU histogram */
@@ -112,11 +116,11 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	// I think I'm going to want to swtich this to shuffle based tiling
 	__shared__ double3 tile[64];
 
-	extern __shared__ bucket sharedMemory[];
+	extern __shared__ gpu_bucket sharedMemory[];
 
 	int warpOffset = threadIdx.x & 0x1f;
 	int histOffset = num_buckets*(warpOffset % numHistograms);
-	bucket* localHist = sharedMemory;
+	gpu_bucket* localHist = sharedMemory;
 
 	// Initialize local histogram to 0
 	for (unsigned i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
@@ -163,7 +167,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 				// Determine which bucket it should go into
 				int bucket = (int) (dist / PDH_res);
 				
-				atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
+				atomicAdd((unsigned long long *) &(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 			}
 		}
 		__syncthreads();
@@ -199,7 +203,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 			double dist = euclidDist(localPoint, tile[i]);
 			int bucket = (int) (dist / PDH_res);
 
-			atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
+			atomicAdd((unsigned long long *) &(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 		}
 	}
 
@@ -230,6 +234,22 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	}
 }
 
+/*
+	Finds the optimal number of histogram copies based on latency and and occupancy
+*/
+// int findNumHistograms(const unsigned int blockSize, const unsigned long long int numBlocks, ) 
+// {
+// 	int numHistograms = 1;
+
+// 	for (k = 1; k <= 32; k++)
+// 	{
+// 		// L Value
+// 		// K Value
+// 	}
+
+// 	return numHistograms;
+// }
+
 
 /*
 	Wrapper for the PDH gpu kernel function
@@ -238,7 +258,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 float PDH_gpu(const unsigned int blockSize = 64)
 {
 	const size_t sizeAtomList = sizeof(double)*PDH_acnt;
-	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
+	const size_t sizeHistogram = sizeof(gpu_bucket)*num_buckets;
 
 	// Allocating Memory
 	gpu_atom dev_atom_list;
@@ -257,6 +277,8 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	bucket* dev_histogram;
 	cudaMalloc((void**) &dev_histogram, sizeHistogram);
 	cudaMemset(dev_histogram, 0, sizeHistogram);
+
+	
 
 	// Calculate our k value
 	printf("Size of the histogram: %ld\n", sizeHistogram);
