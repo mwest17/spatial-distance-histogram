@@ -12,6 +12,7 @@
 
 
 #define BOX_SIZE	23000 /* size of the data box on one dimension            */
+#define ADDITION_CYCLES 73
 
 /* descriptors for single atom in the tree */
 typedef struct atomdesc {
@@ -44,6 +45,7 @@ int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w (the width of each bucket)    */
 atom * atom_list;		/* list of all data points                  */
 gpu_atom gpuAtoms;      /* list of data points in GPU's format      */
+double p[32]; 			/* Probability of no collisions             */
 
 
 /* These are for an old way of tracking time */
@@ -234,21 +236,71 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	}
 }
 
+double findLatency(const int k, const int cl = ADDITION_CYCLES)
+{
+	if (k == 1) return cl;
+	return p[k]*cl + (1.5-p[k])*findLatency(k-1, cl + ADDITION_CYCLES); // **TODO** I don't like this
+	// Want to find a way to make collisions more impactful without subtracting from 1.5
+}
+
+int findRounds(const unsigned int blockSize, const unsigned long long int numBlocks, const size_t sizeHistogram, int k)
+{
+	int numHistograms = 32 / k;
+
+	int device;
+    cudaDeviceProp prop;
+    cudaGetDevice(&device);
+    cudaGetDeviceProperties(&prop, device);
+
+	int blocksPerSM;
+	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSM, PDH_kernel, blockSize, numHistograms * sizeHistogram + 3 * sizeof(double) * blockSize);
+	
+	//number of threads that can be run in each round in a single multiprocessor 
+	unsigned long int occupancy = blocksPerSM * blockSize;
+	
+	int numThreads = blockSize * numBlocks;
+	int numMultiprocessors = prop.multiProcessorCount;
+
+	double denominator = numMultiprocessors * occupancy;
+	return (numThreads + denominator - 1 ) / denominator;
+}
+
 /*
 	Finds the optimal number of histogram copies based on latency and and occupancy
 */
-// int findNumHistograms(const unsigned int blockSize, const unsigned long long int numBlocks, ) 
-// {
-// 	int numHistograms = 1;
+int findNumHistograms(const unsigned int blockSize, const unsigned long long int numBlocks, const size_t sizeHistogram) 
+{
+	int bestk;
+	double minLR = INFINITY;
 
-// 	for (k = 1; k <= 32; k++)
-// 	{
-// 		// L Value
-// 		// K Value
-// 	}
+	for (int k = 1; k <= 32; k++) { // Initialize probabilities
+		p[k] = exp(-(k*(k-1))/(double)(2*num_buckets));
+		// printf("p[%d] = %lf\n", k, p[k]);
+	}
 
-// 	return numHistograms;
-// }
+	for (int k = 1; k <= 32; k *= 2)
+	{
+		// L Value
+		double L = findLatency(k);
+
+		// R Value
+		int R = findRounds(blockSize, numBlocks, sizeHistogram, k); 
+
+		// Find L x R (Total time)
+		double LR = L * R;
+		
+		printf("NumHist: %d, L: %lf R: %d, LxR: %lf\n", 32 / k, L, R, LR);
+
+		// Find if LxR is smaller than current min
+		if (LR > 0 && LR < minLR)
+		{
+			minLR = LR;
+			bestk = k;
+		}
+	}
+
+	return 32 / bestk;
+}
 
 
 /*
@@ -278,23 +330,11 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	cudaMalloc((void**) &dev_histogram, sizeHistogram);
 	cudaMemset(dev_histogram, 0, sizeHistogram);
 
-	
+	// printf("Size of the histogram: %ld\n", sizeHistogram);
+	int numHistograms = findNumHistograms(blockSize, numBlocks, sizeHistogram);
+	size_t amountSharedMemory = sizeHistogram*numHistograms + 3 * sizeof(double) * blockSize; 
 
-	// Calculate our k value
-	printf("Size of the histogram: %ld\n", sizeHistogram);
-	double maxVal = 0;
-	int maxk = 32;
-	for (int i = 1; i <= 32; i++)
-	{
-		double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
-		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
-			maxVal = pk;
-			maxk = i;
-		}
-	}
-	int numHistograms = 32 / maxk;
-	// **TODO** Seems to always be the max number we can make. Why wouldn't we just do that?
-	printf("Num hist: %d, K: %d", numHistograms, maxk);
+	printf("Num hist: %d\n", numHistograms);
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -302,14 +342,7 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 
-	// Can check max size of shared with cudaDeviceGetAttribute
-	// Can set max size of shared with cudaFuncSetAttribute
-
-	// Both the blockSize and the sizeHistogram are user defined
-	// shuffle based tiling would solve blockSize
-
-	// **TODO** Need to ensure that amount of shared memory is less than max
-	PDH_kernel<<<numBlocks, blockSize, sizeHistogram*numHistograms>>>
+	PDH_kernel<<<numBlocks, blockSize, amountSharedMemory>>>
 		(dev_atom_list, dev_histogram, PDH_acnt, PDH_res, num_buckets, numHistograms);
 
 	// Record end time
