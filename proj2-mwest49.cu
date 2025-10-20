@@ -240,6 +240,11 @@ float PDH_gpu(int numHistograms = 1, const unsigned int blockSize = 64)
 	const size_t sizeAtomList = sizeof(double)*PDH_acnt;
 	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
 
+	if (sizeHistogram * numHistograms >= (48000 - sizeof(double3)*blockSize)) 
+	{
+		return 100000.0f;
+	}
+
 	// Allocating Memory
 	gpu_atom dev_atom_list;
 	cudaMalloc((void**) &(dev_atom_list.x), sizeAtomList);
@@ -260,19 +265,19 @@ float PDH_gpu(int numHistograms = 1, const unsigned int blockSize = 64)
 
 	// Calculate our k value
 	// printf("Size of the histogram: %ld\n", sizeHistogram);
-	// double maxVal = 0;
-	// int maxk = 32;
-	// for (int i = 1; i <= 32; i++)
-	// {
-	// 	double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
-	// 	if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
-	// 		maxVal = pk;
-	// 		maxk = i;
-	// 	}
-	// }
-	// int numHistograms = 1;//32 / maxk;
-	// **TODO** Seems to always be the max number we can make. Why wouldn't we just do that?
-	printf("\nNum hist: %d", numHistograms);
+	double maxVal = 0;
+	int maxk = 32;
+	for (int i = 1; i <= 32; i++)
+	{
+		double pk = exp(-(i*(i-1))/(double)(2*sizeHistogram));
+		if (pk > maxVal && (sizeHistogram * (32 / i)) < (48000 - sizeof(double3)*blockSize)) {
+			maxVal = pk;
+			maxk = i;
+		}
+	}
+	int CalcnumHistograms = 32 / maxk;
+	// **TODO** Does not accurately predict the best number of histograms for the best occupancy 
+	printf("\nNum hist: %d, Maxk value: %d, Calculated numHistograms %d", numHistograms, maxk, CalcnumHistograms);
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -306,6 +311,8 @@ float PDH_gpu(int numHistograms = 1, const unsigned int blockSize = 64)
 	cudaFree(dev_atom_list.y);
 	cudaFree(dev_atom_list.z);
 	cudaFree(dev_histogram);
+
+	printf("\nSize of Histograms: %d", sizeHistogram*numHistograms);
 
 	return elapsedTime;
 }
@@ -424,27 +431,37 @@ int main(int argc, char **argv)
 	report_running_time();
 
 	/* print out the histogram */
-	output_histogram();
+	// output_histogram();
 
 	float mintime = 100;
 	int minI = 0;
-	for (i = 1; i <= 32; i++) 
+	for (i = 3; i <= 3; i++) 
 	{
 		/* Computing histograms on GPU */
 		float elapsedTime = PDH_gpu(i);
 
-		report_gpu_running_time(elapsedTime);
-		if (mintime > elapsedTime) {
-			mintime = elapsedTime;
-			minI = i;
+		if (elapsedTime < 100000.0f) {
+			report_gpu_running_time(elapsedTime);
+			if (mintime > elapsedTime) {
+				mintime = elapsedTime;
+				minI = i;
+			}
 		}
 	}
 
-	printf("\nminTime: %f, minI: %d", mintime, minI);
+	printf("\nminTime: %f, minI: %d\n", mintime, minI);
 	// gpu_output_histogram();
 
 	/* Compare histograms between cpu and gpu */
-	compare_histograms(histogram, gpu_histogram);
+	// compare_histograms(histogram, gpu_histogram);
+
+	int device;
+	cudaGetDevice(&device);
+	cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device);
+	printf("Device: %s\n", prop.name);
+    printf("Compute Capability: %d.%d\n", prop.major, prop.minor);
+	printf("Number of Multiprocessors (SMs): %d\n", prop.multiProcessorCount);
 
 	return 0;
 }
