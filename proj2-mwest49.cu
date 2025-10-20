@@ -91,12 +91,12 @@ int PDH_baseline() {
 // GPU Code
 //##############################################################################
 
-__device__ inline double euclidDist(double3 p1, double3 p2)
+__device__ inline double euclidDist(double3 p1, double p2x, double p2y, double p2z)
 {
 	// Component distances between p1 and p2
-	double dx = p1.x - p2.x;
-	double dy = p1.y - p2.y;
-	double dz = p1.z - p2.z;
+	double dx = p1.x - p2x;
+	double dy = p1.y - p2y;
+	double dz = p1.z - p2z;
 
 	// Straight line distance between points
 	return sqrt(dx*dx + dy*dy + dz*dz);
@@ -105,7 +105,6 @@ __device__ inline double euclidDist(double3 p1, double3 p2)
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
 */
-// **TODO** Need to change from array of structs to arrays for each coordinates
 // **TODO** Need to figure out how to do this:
 	// Moreover, we vectorize each dimension array by loading multiple floating point coordinate values in one data transmission unit
 __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datapoints
@@ -115,14 +114,16 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 					  const int num_buckets,
 					  const int numHistograms)
 {
-	// I think I'm going to want to swtich this to shuffle based tiling
-	__shared__ double3 tile[64];
+	extern __shared__ unsigned char sharedMemory[];
 
-	extern __shared__ gpu_bucket sharedMemory[];
+	gpu_atom tile;
+	tile.x = (double*)sharedMemory;
+	tile.y = (double*)sharedMemory + blockDim.x;
+	tile.z = (double*)sharedMemory + 2 * blockDim.x;
 
 	int warpOffset = threadIdx.x & 0x1f;
 	int histOffset = num_buckets*(warpOffset % numHistograms);
-	gpu_bucket* localHist = sharedMemory;
+	gpu_bucket* localHist = (gpu_bucket*) ((double*)sharedMemory + 3 * blockDim.x);
 
 	// Initialize local histogram to 0
 	for (unsigned i = threadIdx.x; i < num_buckets * numHistograms; i += blockDim.x)
@@ -144,19 +145,18 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		localPoint.x = 0; localPoint.y = 0; localPoint.z = 0;
 	}
 
-	// **TODO, need to figure out if I need to load balance the tile distribution
 	for (unsigned long int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
 	{
 		// Load next tile into shared memory
 		unsigned long int tileIndex = (blockDim.x * tileInd) + threadIdx.x;
 		if (tileIndex < PDH_acnt)
 		{
-			// **TODO** Coalesce tile accesses??
-			tile[threadIdx.x].x = dev_atom_list.x[tileIndex];
-			tile[threadIdx.x].y = dev_atom_list.y[tileIndex];
-			tile[threadIdx.x].z = dev_atom_list.z[tileIndex];
+			tile.x[threadIdx.x] = dev_atom_list.x[tileIndex];
+			tile.y[threadIdx.x] = dev_atom_list.y[tileIndex];
+			tile.z[threadIdx.x] = dev_atom_list.z[tileIndex];
 		}	
 		__syncthreads();
+		
 
 		// Find distance from thread's point to all points in tile
 		for (int i = 0; i < blockDim.x; i++)
@@ -164,7 +164,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 			unsigned long long int ind = (blockDim.x * tileInd) + i;
 			if (ind < PDH_acnt) {
 				// Straight line distance between points
-				double dist = euclidDist(localPoint, tile[i]);
+				double dist = euclidDist(localPoint, tile.x[i], tile.y[i], tile.z[i]);
 			
 				// Determine which bucket it should go into
 				int bucket = (int) (dist / PDH_res);
@@ -177,7 +177,9 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	}
 
 	// Every thread store its assigned point into tile
-	tile[threadIdx.x] = localPoint;
+	tile.x[threadIdx.x] = localPoint.x;
+	tile.y[threadIdx.x] = localPoint.y;
+	tile.z[threadIdx.x] = localPoint.z;
 	__syncthreads();
 
 	// Find intra point distances
@@ -202,7 +204,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 
 		if (ind < PDH_acnt)
 		{
-			double dist = euclidDist(localPoint, tile[i]);
+			double dist = euclidDist(localPoint, tile.x[i], tile.y[i], tile.z[i]);
 			int bucket = (int) (dist / PDH_res);
 
 			atomicAdd((unsigned long long *) &(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
@@ -213,7 +215,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 
 	// Merge local histograms into 1
 	// Every thread is assigned a histogram copy. So all are responsible for something
-	// Maybe just copy all into global then reduce in a seperate kernel
+	// Maybe just copy all into global then reduce in a seperate kernel **PERFERED**
 	
 	for (unsigned int curBucket = 0; curBucket < num_buckets; curBucket++)
 	{
@@ -449,7 +451,7 @@ int main(int argc, char **argv)
 
 	PDH_acnt = atoi(argv[1]);
 	PDH_res	 = atof(argv[2]);
-	// int blockSize = atoi(argv[3]);
+	int blockSize = atoi(argv[3]);
 // printf("args are %d and %f\n", PDH_acnt, PDH_res);
 
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
@@ -482,7 +484,7 @@ int main(int argc, char **argv)
 	output_histogram();
 
 	/* Computing histograms on GPU */
-	float elapsedTime = PDH_gpu();
+	float elapsedTime = PDH_gpu(blockSize);
 
 	report_gpu_running_time(elapsedTime);
 
