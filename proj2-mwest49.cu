@@ -91,6 +91,12 @@ int PDH_baseline() {
 // GPU Code
 //##############################################################################
 
+__device__ inline double refinement_sqrt(double x) { // **TODO** Decide if this is good enough or not
+    double y = rsqrtf(x);
+    y = y * (1.5f - 0.5f * x * y * y);
+    return x * y;
+}
+
 __device__ inline double euclidDist(double3 p1, double p2x, double p2y, double p2z)
 {
 	// Component distances between p1 and p2
@@ -99,7 +105,8 @@ __device__ inline double euclidDist(double3 p1, double p2x, double p2y, double p
 	double dz = p1.z - p2z;
 
 	// Straight line distance between points
-	return sqrt(dx*dx + dy*dy + dz*dz);
+	return refinement_sqrt(dx*dx + dy*dy + dz*dz);
+	// return sqrt(dx*dx + dy*dy + dz*dz);
 }
 
 /*
@@ -192,9 +199,9 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	// 	unsigned long long int ind = (blockDim.x * blockIdx.x) + tileIndex;
 	// 	if (ind < PDH_acnt && (i <= blockDim.x / 2 - 1 || threadIdx.x < (blockDim.x / 2)))
 	// 	{
-	// 		double dist = euclidDist(localPoint, tile[tileIndex]);
+	// 		double dist = euclidDist(localPoint, tile.x[i], tile.y[i], tile.z[i]);
 	// 		int bucket = (int) (dist / PDH_res);
-	// 		atomicAdd(&(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
+	// 		atomicAdd((unsigned long long *) &(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
 	// 	}
 	// }
 
@@ -432,9 +439,11 @@ void gpu_output_histogram(){
 	Compute and display the difference between the CPU and GPU histograms
 */
 void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
-    printf("\nDifference between CPU and GPU histograms:");
+    bool different = false;
+	printf("\nDifference between CPU and GPU histograms:");
     for (int i = 0; i < num_buckets; i++) {
         long long diff = cpu_hist[i].d_cnt - gpu_hist[i].d_cnt;
+		if (diff != 0) different = true;
         if (i % 5 == 0)
             printf("\n%02d: ", i);
         printf("%15lld ", diff);
@@ -442,6 +451,7 @@ void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
             printf("| ");
     }
     printf("\n");
+	(different)? printf("Different\n") : printf("Not different\n");
 }
 
 
