@@ -220,10 +220,8 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 
 	__syncthreads();
 
-	// Merge local histograms into 1
-	// Every thread is assigned a histogram copy. So all are responsible for something
-	// Maybe just copy all into global then reduce in a seperate kernel **PERFERED**
-	
+
+	// Merging private histogram copies into a single copy
 	for (unsigned int curBucket = 0; curBucket < num_buckets; curBucket++)
 	{
 		for (unsigned int stride = numHistograms/2; stride > 0; stride /= 2) 
@@ -236,14 +234,77 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		}
 	}
 
-
 	// Copy local output to global memory
 	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
 	{
 		// **TODO** Use a faster tree based reduction algorithm
-		atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
+		// atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
+		dev_histogram[blockIdx.x * num_buckets + i].d_cnt = localHist[i].d_cnt;
 	}
+
+	// Parallel reduction
+
+	
+
+	for (unsigned int curBucket = blockIdx.x; curBucket < num_buckets; curBucket += gridDim.x)
+	{
+		for (unsigned int stride = numHistograms/2; stride > 0; stride /= 2) // Not enough threads for every bucket
+		{
+			if (threadIdx.x < stride)
+			{
+				dev_histogram[curBucket + num_buckets*threadIdx.x].d_cnt += dev_histogram[curBucket + num_buckets*threadIdx.x + stride*num_buckets].d_cnt; 
+			}
+			__syncthreads();
+		}
+	}
+	// unsigned int i = blockIdx.x + num_buckets * threadIdx.x;
+	// unsigned int ri = blockIdx.x + 2 * num_buckets * threadIdx.x;  
+	// localHist[threadIdx.x].d_cnt = dev_histogram[i].d_cnt + dev_histogram[ri].d_cnt;
+	// // Local hist is a gpu_bucket, so will not work.
+
+	// __syncthreads();
+	// for (unsigned int stride = gridDim.x / 2; stride > 0; stride /= 2)
+	// {
+	// 	if (threadIdx.x < stride)
+	// 	{
+	// 		localHist[threadIdx.x].d_cnt += localHist[threadIdx.x + stride].d_cnt;
+	// 	} 
+	// 	__syncthreads();
+	// }
+	// if (threadIdx.x == 0) dev_histogram[blockIdx.x].d_cnt = localHist[0].d_cnt;
+
 }
+
+__global__ void reduction(bucket* dev_histogram, // Array of bucket counts
+					  const int num_buckets,
+					  const int numHistograms)
+{
+	// Every Block reduces 1 index of the histogram
+	// Offset is then blockIdx.x
+	// unsigned int segment = 2*blockDim.x*blockIdx.x;
+	// printf("Test\n");
+	unsigned int i = blockIdx.x + num_buckets * threadIdx.x;
+	unsigned int ri = blockIdx.x + 2 * num_buckets * threadIdx.x;  
+	// Just need to figure out the i value, 
+	// then rest of reduction should work fine
+
+	__shared__ bucket input_s[64];
+	input_s[threadIdx.x].d_cnt = dev_histogram[i].d_cnt + dev_histogram[ri].d_cnt;
+	__syncthreads();
+
+	for (unsigned int stride = blockDim.x / 2; stride > 0; stride /= 2)
+	{
+		if (threadIdx.x < stride)
+		{
+			input_s[threadIdx.x].d_cnt += input_s[threadIdx.x + stride].d_cnt;
+		}
+		__syncthreads();
+	}	
+
+	//Final sum for that bucket will be in index 0
+	if (threadIdx.x == 0) atomicAdd(&dev_histogram[blockIdx.x % num_buckets].d_cnt, (unsigned long long) input_s[0].d_cnt);
+}
+
 
 double findLatency(const int k, const int cl = ADDITION_CYCLES)
 {
@@ -298,7 +359,7 @@ int findNumHistograms(const unsigned int blockSize, const unsigned long long int
 		// Find L x R (Total time)
 		double LR = L * R;
 		
-		printf("NumHist: %d, L: %lf R: %d, LxR: %lf\n", 32 / k, L, R, LR);
+		// printf("NumHist: %d, L: %lf R: %d, LxR: %lf\n", 32 / k, L, R, LR);
 
 		// Find if LxR is smaller than current min
 		if (LR > 0 && LR < minLR)
@@ -335,16 +396,15 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	// Need 1 thread per point
 	const unsigned long long int numBlocks = (PDH_acnt + blockSize - 1) / blockSize;
 
-	bucket* dev_histogram;
-	cudaMalloc((void**) &dev_histogram, sizeHistogram);
-	cudaMemset(dev_histogram, 0, sizeHistogram);
-
 	// printf("Size of the histogram: %ld\n", sizeHistogram);
 	int numHistograms = findNumHistograms(blockSize, numBlocks, sizeHistogram);
-	size_t amountSharedMemory = sizeHistogram*numHistograms + 3 * sizeof(double) * blockSize; 
+	size_t amountSharedMemory = sizeHistogram * numHistograms + 3 * sizeof(double) * blockSize; 
+	// printf("Num hist: %d\n", numHistograms);
 
-	printf("Num hist: %d\n", numHistograms);
-	
+	bucket* dev_histogram;
+	cudaMalloc((void**) &dev_histogram, sizeHistogram * numBlocks);
+	cudaMemset(dev_histogram, 0, sizeHistogram * numBlocks);
+
 	// Start timing
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
