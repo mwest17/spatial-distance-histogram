@@ -91,9 +91,8 @@ int PDH_baseline() {
 // GPU Code
 //##############################################################################
 
-__device__ inline double refinement_sqrt(double x) { // **TODO** Decide if this is good enough or not
-    double y = rsqrtf(x);
-    y = y * (1.5f - 0.5f * x * y * y);
+__device__ inline double reciprocal_sqrt(double x) {
+    double y = rsqrt(x);
     return x * y;
 }
 
@@ -105,8 +104,7 @@ __device__ inline double euclidDist(double3 p1, double p2x, double p2y, double p
 	double dz = p1.z - p2z;
 
 	// Straight line distance between points
-	return refinement_sqrt(dx*dx + dy*dy + dz*dz);
-	// return sqrt(dx*dx + dy*dy + dz*dz);
+	return reciprocal_sqrt(dx*dx + dy*dy + dz*dz);
 }
 
 /*
