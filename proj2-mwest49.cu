@@ -296,7 +296,7 @@ int findNumHistograms(const unsigned int blockSize, const unsigned long long int
 		// Find L x R (Total time)
 		double LR = L * R;
 		
-		printf("NumHist: %d, L: %lf R: %d, LxR: %lf\n", 32 / k, L, R, LR);
+		// printf("NumHist: %d, L: %lf R: %d, LxR: %lf\n", 32 / k, L, R, LR);
 
 		// Find if LxR is smaller than current min
 		if (LR > 0 && LR < minLR)
@@ -341,7 +341,7 @@ float PDH_gpu(const unsigned int blockSize = 64)
 	int numHistograms = findNumHistograms(blockSize, numBlocks, sizeHistogram);
 	size_t amountSharedMemory = sizeHistogram*numHistograms + 3 * sizeof(double) * blockSize; 
 
-	printf("Num hist: %d\n", numHistograms);
+	// printf("Num hist: %d\n", numHistograms);
 	
 	// Start timing
 	cudaEvent_t start, stop;
@@ -457,9 +457,24 @@ int main(int argc, char **argv)
 {
 	int i;
 
-	PDH_acnt = atoi(argv[1]);
-	PDH_res	 = atof(argv[2]);
-	int blockSize = atoi(argv[3]);
+	PDH_acnt = 10000;
+	if (argc > 1)
+	{
+		PDH_acnt = atoi(argv[1]);
+	}
+	
+	PDH_res = 500;
+	if (argc > 2)
+	{
+		PDH_res	 = atof(argv[2]);	
+	}
+
+	int blockSize = 64;
+	if (argc > 3)
+	{
+		blockSize = atoi(argv[3]);
+	}
+	
 // printf("args are %d and %f\n", PDH_acnt, PDH_res);
 
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
@@ -497,6 +512,9 @@ int main(int argc, char **argv)
 	report_gpu_running_time(elapsedTime);
 
 	gpu_output_histogram();
+
+	// Running time output per rubric
+	printf("******** Total Running Time of Kernel = %f sec *******\n", elapsedTime / 1000.0);
 
 	/* Compare histograms between cpu and gpu */
 	compare_histograms(histogram, gpu_histogram);
