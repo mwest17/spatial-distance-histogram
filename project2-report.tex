@@ -22,9 +22,10 @@
 }
 % Package for multicolumn
 \usepackage{multicol}
-\usepackage{paracol}
 % Package for removing paragraph identations
 \usepackage{parskip}
+\usepackage{tabularx}
+\usepackage{float}
 \setlength\columnsep{18pt}
 % Sets bastract
 \renewenvironment{abstract}
@@ -38,7 +39,7 @@
 	% Makes header
 	\pagestyle{fancy}
 	\thispagestyle{empty}
-	\fancyhead[R]{\textit{}}
+	\fancyhead[R]{}
 	\fancyhead[L]{}
 	% Makes footnotes with an asterisk
 	\renewcommand*{\thefootnote}{\fnsymbol{footnote}}
@@ -53,15 +54,15 @@
 	\end{center}
 	{\color{gray}\hrule}
 	\vspace{0.4cm}
-	\begin{abstract}
-		\input{./abstract.tex}
-	\end{abstract}
-	{\color{gray}\hrule}
+	%\begin{abstract}
+	%	\input{./abstract.tex}
+	%\end{abstract}
+	%{\color{gray}\hrule}
 	\medskip
 	\input{./sections/1_intro.tex} % Intro/Approach/Motivations
-	\input{./sections/2_section.tex} %Optimizations
-	\input{./sections/3_section.tex} % Results
-	\input{./sections/4_conclusion.tex} %Conclusion
-	\bibliographystyle{plain}
-	\bibliography{references}
+	%\input{./sections/2_section.tex} %Optimizations
+	%\input{./sections/3_section.tex} % Results
+	%\input{./sections/4_conclusion.tex} %Conclusion
+	%\bibliographystyle{plain}
+	%\bibliography{references}
 \end{document}

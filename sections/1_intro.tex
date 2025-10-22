@@ -1,8 +1,54 @@
 \begin{multicols}{2}
-	\tableofcontents
+	%\tableofcontents
 	\section{Introduction}
 	%\cite{Bowker1985}
-	intro
-	\subsection{Subsection}
-	Subsection
+	% Reduce this section by a lot. Remove the basic stuff. They already know
+	A Spatial Distance Histogram (SDH) is a graphical representation of the distribution of distances among a set of points. The end result is a chart that characterizes placement and clustering of points.\\
+	To compute a SDH, the amount of point-to-point distances in each range must determined. Therefore, the distance between all points must be calculated. This means creating a SDH is a $\Theta(n^2)$ operation, where $n$ is the total number of points.
+	\subsection{Naive Implementation}
+	Unfortunately this means that for large $n$, it will take a very long time to create the histogram. Thankfully, it is possible to compute a SDH in parallel. This mitigates the high time complexity and makes it far more feasible to create a SDH for large data sets.\\
+	The most obvious approach to parallelize the computation is to have each thread compute the distances between the element it was assigned and to all elements beyond that. While this approach drastically improves the running time as compared to the CPU implementation, there are still performance opporutities through optimizations. The rest of this report is dedicated to exploring the optimizations used in this implementation and the results they achieved.%
+
+	\section{Optimizations}
+	\subsection{Output Privitization}
+	Output privitization is a parallel computing optimization technique where multiple sub-copies of the output are computed to reduce the number of memory access conflicts. When multiple threads attempt to access the same memory address, they must wait to sequentially perform their operation.
+	\subsubsection{Multiple Private Copies}
+	The optimized kernel is able to create multiple private histogram copies to further reduce the access conflicts. The copies are assigned based on the offset within the warp. This is so that the threads that are being ran concurrently will access different private copies.
+	% Multiple copies
+	% Determining how many
+	\subsection{Tiling}
+	\subsection{Memory Coalescing}
+	
+	%Reduction/Balancing
+	\subsection{Other Optimizations}
+	%Sqrt
+	\end{multicols}
+	
+	\begin{table}[H]
+		\centering
+		\begin{tabularx}{0.7\textwidth} { 
+				>{\raggedleft\arraybackslash}X 
+				>{\raggedright\arraybackslash}X 
+				>{\raggedright\arraybackslash}X
+				>{\raggedright\arraybackslash}X  
+				>{\centering\arraybackslash}X }
+			\hline
+			n & CPU & Project 1 & Project 2 & Speedup\\
+			\hline
+			10k    & 1.355137  & 0.044340 & 0.015016 & 2.95x\\
+			100k  & 135.4629  & 3.235683 & 0.977567 & 3.31x\\
+			500k  & 3386.080  & 83.29670 & 25.58086 & 3.26x\\
+			\hline
+		\end{tabularx}
+		\caption{Time (in seconds) of each implementation and speedup from Project 1 to 2}
+		\label{table:speeds}
+	\end{table}
+	
+	
+\begin{multicols}{2}
+	\section{Results}
+		See Table \ref{table:speeds}
+		
+	\section{Conclusion}
+	
 \end{multicols}
