@@ -40,6 +40,7 @@ typedef struct gpu_hist_entry{
 
 bucket * histogram;		/* list of all buckets in the histogram     */
 bucket* gpu_histogram;  /* list of all buckets in the GPU histogram */
+bucket* proj1_gpu_hist;
 long long	PDH_acnt;	/* total number of data points              */
 int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w (the width of each bucket)    */
@@ -85,6 +86,115 @@ int PDH_baseline() {
 	}
 	return 0;
 }
+
+
+
+
+
+//##############################################################################
+// GPU Code
+//##############################################################################
+
+/*
+	GPU kernel function to compute the PDH for a given set of 3d points
+*/
+// Potential optimizations:
+// Store copy of output historgram in each of the warps' shared memory
+
+// Threads are not in sync at all. Need to figure out way to make all perform roughly same number of work
+// Number of computations range from n to 1
+
+// Going to want to divide distances into sections and figure out how to iterate through
+
+// Threads divide up input into sections and move down each section
+
+
+__global__ void proj1_PDH_kernel(atom* dev_atom_list, // Array containing all datapoints
+						   bucket* dev_histogram, // Array of bucket counts
+						   int PDH_acnt, // Number of datapoints
+						   int PDH_res) // Bucket size 
+{
+	// Check if our current thread index is out of range of the array	
+	int index = (blockDim.x * blockIdx.x) + threadIdx.x;
+	if (index < PDH_acnt) 
+	{
+		// Compute distance between points in the range [index + 1....n]
+		for (int i = index + 1; i < PDH_acnt; i++)
+		{
+			// Compute component distances from point at index to point at i
+			double dx = dev_atom_list[index].x_pos - dev_atom_list[i].x_pos;
+			double dy = dev_atom_list[index].y_pos - dev_atom_list[i].y_pos;
+			double dz = dev_atom_list[index].z_pos - dev_atom_list[i].z_pos;
+
+			// Straight line distance between points
+			double dist = sqrt(dx*dx + dy*dy + dz*dz);
+			
+			// Determine which bucket it should go into
+			int bucket = (int) (dist / PDH_res);
+			
+			atomicAdd(&(dev_histogram[bucket].d_cnt), (unsigned long long) 1);
+		}
+	}
+}
+
+
+/*
+	Wrapper for the PDH gpu kernel function
+	Returns the time taken to run CUDA kernel
+*/
+float proj1_PDH_gpu() 
+{
+	const size_t sizeAtomList = sizeof(atom)*PDH_acnt;
+	const size_t sizeHistogram = sizeof(bucket)*num_buckets;
+	
+	// Allocating Memory
+	atom* dev_atom_list;
+	cudaMalloc((void**) &dev_atom_list, sizeAtomList);
+	bucket* dev_histogram;
+	cudaMalloc((void**) &dev_histogram, sizeHistogram);
+
+	// Copying input values to gpu atom list
+	cudaMemcpy(dev_atom_list, atom_list, sizeAtomList, cudaMemcpyHostToDevice);
+	cudaMemset(dev_histogram, 0, sizeHistogram);
+
+	// Need 1 thread per point
+	int threadsPerBlock = 256;
+	int blocksPerGrid = (PDH_acnt + threadsPerBlock - 1) / threadsPerBlock;
+
+	
+	// Start timing
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+
+	// Call kernel function (Passing in the array of data)
+	proj1_PDH_kernel<<<blocksPerGrid, threadsPerBlock>>>(dev_atom_list, dev_histogram, PDH_acnt, PDH_res);
+
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	float elapsedTime;
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+
+	// Copy output histogram from global to cpu mem
+	cudaMemcpy(proj1_gpu_hist, dev_histogram, sizeHistogram, cudaMemcpyDeviceToHost);
+
+	cudaFree(dev_atom_list);
+	cudaFree(dev_histogram);
+
+	return elapsedTime;
+}
+
+//##############################################################################
+
+
+
+
+
+
+
 
 
 //##############################################################################
@@ -433,6 +543,22 @@ void gpu_output_histogram(){
 }
 
 
+void gpu_output_histogramP1(){
+	int i;
+	long long total_cnt = 0;
+	for(i=0; i< num_buckets; i++) {
+		if(i%5 == 0) /* we print 5 buckets in a row */
+			printf("\n%02d: ", i);
+		printf("%15lld ", proj1_gpu_hist[i].d_cnt);
+		total_cnt += proj1_gpu_hist[i].d_cnt;
+	  	/* we also want to make sure the total distance count is correct */
+		if(i == num_buckets - 1)
+			printf("\n T:%lld \n", total_cnt);
+		else printf("| ");
+	}
+}
+
+
 /*
 	Compute and display the difference between the CPU and GPU histograms
 */
@@ -480,6 +606,8 @@ int main(int argc, char **argv)
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
 	histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
 	gpu_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
+	proj1_gpu_hist = (bucket *)malloc(sizeof(bucket)*num_buckets);
+
 
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
@@ -505,6 +633,10 @@ int main(int argc, char **argv)
 
 	/* print out the histogram */
 	output_histogram();
+
+	float elapsedTimeP1 = proj1_PDH_gpu();
+	report_gpu_running_time(elapsedTimeP1);
+	gpu_output_histogramP1();
 
 	/* Computing histograms on GPU */
 	float elapsedTime = PDH_gpu(blockSize);
