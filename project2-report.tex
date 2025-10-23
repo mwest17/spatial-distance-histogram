@@ -22,17 +22,16 @@
 }
 % Package for multicolumn
 \usepackage{multicol}
-% Package for removing paragraph identations
-\usepackage{parskip}
 \usepackage{tabularx}
 \usepackage{float}
+%\usepackage{biblatex}
 \setlength\columnsep{18pt}
 % Sets bastract
 \renewenvironment{abstract}
 {\par\noindent\textbf{\abstractname}\ \ignorespaces \\}
 {\par\noindent\medskip}
 
-
+\setlength{\parindent}{18pt}
 
 
 \begin{document}
@@ -54,15 +53,17 @@
 	\end{center}
 	{\color{gray}\hrule}
 	\vspace{0.4cm}
-	%\begin{abstract}
-	%	\input{./abstract.tex}
-	%\end{abstract}
-	%{\color{gray}\hrule}
 	\medskip
-	\input{./sections/1_intro.tex} % Intro/Approach/Motivations
-	%\input{./sections/2_section.tex} %Optimizations
-	%\input{./sections/3_section.tex} % Results
-	%\input{./sections/4_conclusion.tex} %Conclusion
+	\begin{multicols}{2}
+		\input{./sections/1_intro.tex}% Intro/Approach/Motivations
+		\input{./sections/2_section.tex}%Optimizations
+	\end{multicols}
+	\input{./figures/speedtable.tex}
+	\begin{multicols}{2}
+		\input{./sections/3_section.tex}% Results
+		\input{./sections/4_conclusion.tex}%Conclusion
+	\end{multicols}
 	%\bibliographystyle{plain}
 	%\bibliography{references}
+	%\printbibliography
 \end{document}
