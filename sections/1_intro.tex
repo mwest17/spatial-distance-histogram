@@ -2,6 +2,6 @@
 	\section{Introduction}
 	%\cite{Bowker1985}
 	% Reduce this section by a lot. Remove the basic stuff. They already know
-	\hspace{\parindent}Spatial Distance Histograms (SDH) are a graphical representation of the distribution of distances among a set of points. They can be used to characterize the clustering of data points in many applications. Because the distances between every point must be calculated, creating a SDH is a $\Theta(n^2)$ operation, where n is the total number of points.
+	\hspace{\parindent}Spatial Distance Histograms (SDH) are a graphical representation of the distribution of distances among a set of points. They can be used to characterize the clustering of data points in many applications. Because the distances between every point must be calculated, creating an SDH is a $\Theta(n^2)$ operation, where n is the total number of points.
 	
-	This calculation can be expedited by running it in parallel on a GPU. The naive implementation, while vastly quicker than running on the CPU, is far from the most optimal. The rest of this report is dedicated to exploring the optimizations used in the improved kernel and the results they achieved.%
+	This calculation can be expedited by running it in parallel on a GPU. The naive implementation, while vastly quicker than running on the CPU, is far from optimal. The rest of this report is dedicated to exploring the optimizations used in the improved kernel and the results they achieved.%
