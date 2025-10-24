@@ -38,14 +38,14 @@ typedef struct gpu_hist_entry{
 } gpu_bucket;
 
 
-bucket * histogram;		/* list of all buckets in the histogram     */
+bucket * histogram;	    /* list of all buckets in the histogram     */
 bucket* gpu_histogram;  /* list of all buckets in the GPU histogram */
-long long	PDH_acnt;	/* total number of data points              */
-int num_buckets;		/* total number of buckets in the histogram */
-double   PDH_res;		/* value of w (the width of each bucket)    */
-atom * atom_list;		/* list of all data points                  */
+long long	PDH_acnt;	    /* total number of data points              */
+int num_buckets;	    /* total number of buckets in the histogram */
+double   PDH_res;	    /* value of w (the width of each bucket)    */
+atom * atom_list;	    /* list of all data points                  */
 gpu_atom gpuAtoms;      /* list of data points in GPU's format      */
-double p[32]; 			/* Probability of no collisions             */
+double p[32]; 		    /* Probability of no collisions             */
 
 
 /* These are for an old way of tracking time */
@@ -110,8 +110,6 @@ __device__ inline double euclidDist(double3 p1, double p2x, double p2y, double p
 /*
 	GPU kernel function to compute the PDH for a given set of 3d points
 */
-// **TODO** Need to figure out how to do this:
-	// Moreover, we vectorize each dimension array by loading multiple floating point coordinate values in one data transmission unit
 __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datapoints
 					  bucket* dev_histogram, // Array of bucket counts
 					  const int PDH_acnt, // Number of datapoints
@@ -119,6 +117,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 					  const int num_buckets,
 					  const int numHistograms)
 {
+	// All allocated shared memory
 	extern __shared__ unsigned char sharedMemory[];
 
 	gpu_atom tile;
@@ -136,10 +135,10 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		localHist[i].d_cnt = 0;
 	}
 
-	// Check if our current thread index is out of range of the array
+	// This thread's global position in the grid
 	unsigned long long int index = (blockDim.x * blockIdx.x) + threadIdx.x;
 	
-	// Load this thread's left point into a register
+	// Load this thread's anchor point into registers
 	double3 localPoint;
 	if (index < PDH_acnt) {
 		localPoint.x = dev_atom_list.x[index];
@@ -150,6 +149,7 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		localPoint.x = 0; localPoint.y = 0; localPoint.z = 0;
 	}
 
+	// Iterate through all tiles above this block
 	for (unsigned long int tileInd = blockIdx.x + 1; tileInd < gridDim.x; tileInd++)
 	{
 		// Load next tile into shared memory
@@ -181,28 +181,13 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 		
 	}
 
-	// Every thread store its assigned point into tile
+	// Every thread store its anchor point into tile
 	tile.x[threadIdx.x] = localPoint.x;
 	tile.y[threadIdx.x] = localPoint.y;
 	tile.z[threadIdx.x] = localPoint.z;
 	__syncthreads();
 
 	// Find intra point distances
-	// **TODO** Balance the intra point distance calculation
-	// Balancing is causing some histogram blocks to count more. Almost all is clustered in specific ones. 
-	// We myst be iterating too many times.
-	// for (int i = 1; i <= blockDim.x / 2; i++) 
-	// {
-	// 	int tileIndex = (threadIdx.x + i) % blockDim.x;
-	// 	unsigned long long int ind = (blockDim.x * blockIdx.x) + tileIndex;
-	// 	if (ind < PDH_acnt && (i <= blockDim.x / 2 - 1 || threadIdx.x < (blockDim.x / 2)))
-	// 	{
-	// 		double dist = euclidDist(localPoint, tile.x[i], tile.y[i], tile.z[i]);
-	// 		int bucket = (int) (dist / PDH_res);
-	// 		atomicAdd((unsigned long long *) &(localHist[histOffset + bucket].d_cnt), (unsigned long long) 1);
-	// 	}
-	// }
-
 	for (int i = threadIdx.x + 1; i < blockDim.x; i++) 
 	{
 		unsigned long long int ind = (blockDim.x * blockIdx.x) + i;
@@ -219,9 +204,6 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	__syncthreads();
 
 	// Merge local histograms into 1
-	// Every thread is assigned a histogram copy. So all are responsible for something
-	// Maybe just copy all into global then reduce in a seperate kernel **PERFERED**
-	
 	for (unsigned int curBucket = 0; curBucket < num_buckets; curBucket++)
 	{
 		for (unsigned int stride = numHistograms/2; stride > 0; stride /= 2) 
@@ -238,10 +220,11 @@ __global__ void PDH_kernel(gpu_atom dev_atom_list, // Array containing all datap
 	// Copy local output to global memory
 	for (int i = threadIdx.x; i < num_buckets; i += blockDim.x)
 	{
-		// **TODO** Use a faster tree based reduction algorithm
 		atomicAdd(&(dev_histogram[i].d_cnt), (unsigned long long) localHist[i].d_cnt);
 	}
 }
+
+
 
 double findLatency(const int k, const int cl = ADDITION_CYCLES)
 {
@@ -249,6 +232,7 @@ double findLatency(const int k, const int cl = ADDITION_CYCLES)
 	return p[k]*cl + (1.5-p[k])*findLatency(k-1, cl + ADDITION_CYCLES); // **TODO** I don't like this
 	// Want to find a way to make collisions more impactful without subtracting from 1.5
 }
+
 
 int findRounds(const unsigned int blockSize, const unsigned long long int numBlocks, const size_t sizeHistogram, int k)
 {
@@ -262,14 +246,14 @@ int findRounds(const unsigned int blockSize, const unsigned long long int numBlo
 	int blocksPerSM;
 	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSM, PDH_kernel, blockSize, numHistograms * sizeHistogram + 3 * sizeof(double) * blockSize);
 	
-	//number of threads that can be run in each round in a single multiprocessor 
+	// Number of threads that can be run in each round in a single multiprocessor 
 	unsigned long int occupancy = blocksPerSM * blockSize;
 	
 	int numThreads = blockSize * numBlocks;
 	int numMultiprocessors = prop.multiProcessorCount;
 
 	double denominator = numMultiprocessors * occupancy;
-	return (numThreads + denominator - 1 ) / denominator;
+	return (numThreads + denominator - 1 ) / denominator; // Finding the ceiling of this fraction
 }
 
 /*
@@ -437,11 +421,11 @@ void gpu_output_histogram(){
 	Compute and display the difference between the CPU and GPU histograms
 */
 void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
-    bool different = false;
+//     bool different = false;
 	printf("\nDifference between CPU and GPU histograms:");
     for (int i = 0; i < num_buckets; i++) {
         long long diff = cpu_hist[i].d_cnt - gpu_hist[i].d_cnt;
-		if (diff != 0) different = true;
+		// if (diff != 0) different = true;
         if (i % 5 == 0)
             printf("\n%02d: ", i);
         printf("%15lld ", diff);
@@ -449,7 +433,7 @@ void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
             printf("| ");
     }
     printf("\n");
-	(different)? printf("Different\n") : printf("Not different\n");
+	// (different)? printf("Different\n") : printf("Not different\n");
 }
 
 
