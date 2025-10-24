@@ -14,10 +14,4 @@ The current, optimized implementation achieves over a 3x speedup compared to the
 <img width="837" height="225" alt="Screenshot_20251023_234417" src="https://github.com/user-attachments/assets/913e11e5-1cf7-434d-8275-3824e82efd42" />
 
 
-### Optimized:
-
 <img width="758" height="272" alt="Screenshot_20251023_235047" src="https://github.com/user-attachments/assets/79651371-62f2-4b35-8964-b4f1d95364c0" />
-
-### Naive:
-
-<img width="758" height="272" alt="Screenshot_20251023_235057" src="https://github.com/user-attachments/assets/796a5ad9-8f5c-40d8-9c66-5e38cbf3851c" />
