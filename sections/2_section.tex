@@ -1,0 +1,29 @@
+\section{Optimizations}
+\subsection{Output Privitization}
+\hspace{\parindent}Output privitization is a parallel computing optimization technique where multiple sub-copies of the output are computed to reduce the number of memory access conflicts. When multiple threads attempt to access the same memory address, they must wait to sequentially perform their operation. 
+
+This technique led to the greatest single speedup. With a a single private copy was made for each block of threads, there was about a \textbf{HERE}x speedup.
+ 
+\subsubsection{Multiple Private Copies}
+\hspace{\parindent}The next logical step from one private copy is to create multiple private copies. However, creating the maxinum number of copies is unfeasable. The more copies that are created, the fewer blocks that can be ran on a multiprocessor at the same time. 
+
+The final kernel uses a model to determines the best number of copies to create. It estimates memory access speed and the number of rounds required for each number of shared histograms. The model is based on the one described in \textbf{PAPER}. However, during testing the model did not weight the cost of a conflict enough. This led to it creating less copies than was optimal in certain scenarios. To remedy this, the conflict cost was weighted more.
+
+To further increase the number of possible copies, the size of each private copy was reduced. The maximum size of each bucket was reduced since each private copy count not need to hold the final value of the histogram.
+\subsubsection{Parallel Reduction}
+\hspace{\parindent}Since multiple sub-copies of the output were created, they must be combined into the final output. The optimized kernel first combines the local copies of each block into a single local copy. It does this through a parallel reduction. Each block then adds its local copy into the final output copy.
+
+This would likely be improved by copying all of the single local copy from shared into global, then reducing in parallel there. In a partial implementation it increased performance by about 4\%. However, this was not able to be made fully working in time.
+
+
+\subsection{Tiling}
+\hspace{\parindent}Tiling is an optimization technique where values that will be repeatedly used will be stored in faster memory to reduce the cost of accessing global memory. The input data can be divided into sections. Every element of this section must compute its distance with each anchor value in the block. This brought a modest speed increase to the kernel.
+
+\subsubsection{Intra-Tile Distance Balancing}
+\hspace{\parindent}On the step for computing the distances of points within the tile, there control divergence. The result of this is some resources will be reserved but not used. A partially working version was implemented and saw a marginal speed increase. This was also not able to be made fully working in time.
+
+\subsection{Memory Coalescing}
+\hspace{\parindent}When something in memory is accessed, it becomes quicker to access the adjacent memory. Making all the threads access sequential elements in the input data can improve the access times. This also led to a marginal speed increase. 
+
+\subsection{Other Optimizations}
+\hspace{\parindent}One additional optimization that showed to be worthwhile was to change the sqaure root function from the standard double precision to a double precision reciprocal square root and then multiply that by the starting value. 

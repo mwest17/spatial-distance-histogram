@@ -1,0 +1,69 @@
+\documentclass[a4paper,12pt]{article}
+% Package to make citations superscrit with brackets
+\usepackage[super,square]{natbib}
+% Package to change margin size
+\usepackage{anysize}
+\marginsize{2cm}{2cm}{1cm}{2cm}
+% Package to make headers
+\usepackage{fancyhdr}
+\renewcommand{\headrulewidth}{0pt}
+% Package for highligths
+\usepackage{soul}
+% Colors for the references links
+\usepackage[dvipsnames]{xcolor}
+% Package to link references
+\usepackage{hyperref}
+\hypersetup{
+	colorlinks=true,
+	linkcolor=black,
+	citecolor=CadetBlue,
+	filecolor=CadetBlue,      
+	urlcolor=CadetBlue,
+}
+% Package for multicolumn
+\usepackage{multicol}
+\usepackage{tabularx}
+\usepackage{float}
+%\usepackage{biblatex}
+\setlength\columnsep{18pt}
+% Sets bastract
+\renewenvironment{abstract}
+{\par\noindent\textbf{\abstractname}\ \ignorespaces \\}
+{\par\noindent\medskip}
+
+\setlength{\parindent}{18pt}
+
+
+\begin{document}
+	% Makes header
+	\pagestyle{fancy}
+	\thispagestyle{empty}
+	\fancyhead[R]{}
+	\fancyhead[L]{}
+	% Makes footnotes with an asterisk
+	\renewcommand*{\thefootnote}{\fnsymbol{footnote}}
+	\begin{center}
+		\Large{\textbf{Spatial Distance Histogram Parallel Optimizations}}
+		\vspace{0.4cm}
+		\normalsize
+		\\ Matthew West
+		\vspace{0.1cm}
+		\medskip
+		\normalsize
+	\end{center}
+	{\color{gray}\hrule}
+	\vspace{0.4cm}
+	\medskip
+	\begin{multicols}{2}
+		\input{./sections/1_intro.tex}% Intro/Approach/Motivations
+		\input{./sections/2_section.tex}%Optimizations
+	\end{multicols}
+	\input{./figures/speedtable.tex}
+	\begin{multicols}{2}
+		\input{./sections/3_section.tex}% Results
+		\input{./sections/4_conclusion.tex}%Conclusion
+	\end{multicols}
+	%\bibliographystyle{plain}
+	%\bibliography{references}
+	%\printbibliography
+\end{document}
