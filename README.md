@@ -8,12 +8,16 @@ This suffered due to poor memory bandwidth utilization and atomic operation conf
 
 The current implementation now utilizes tiling of array sections, output privatization in shared memory, and improved memory coalescing.
 
-The current, optimized implementation achieves nearly a 2x speedup compared to the naive GPU implementation on an input of 1,000,000 points. The results are shown below:
+The current, optimized implementation achieves over a 3x speedup compared to the naive GPU implementation. The results are shown below:
+
+
+<img width="837" height="225" alt="Screenshot_20251023_234417" src="https://github.com/user-attachments/assets/913e11e5-1cf7-434d-8275-3824e82efd42" />
+
 
 ### Optimized:
 
-<img width="781" height="381" alt="optimizedApproach" src="https://github.com/user-attachments/assets/70c9b8d3-97ca-475f-86a3-db37b83bdab7" />
+<img width="758" height="272" alt="Screenshot_20251023_235047" src="https://github.com/user-attachments/assets/79651371-62f2-4b35-8964-b4f1d95364c0" />
 
 ### Naive:
 
-<img width="774" height="381" alt="naiveApproach" src="https://github.com/user-attachments/assets/fe7b1195-9498-4c7b-8d6a-110308cb723b" />
+<img width="758" height="272" alt="Screenshot_20251023_235057" src="https://github.com/user-attachments/assets/796a5ad9-8f5c-40d8-9c66-5e38cbf3851c" />
