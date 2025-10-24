@@ -442,19 +442,19 @@ int main(int argc, char **argv)
 	int i;
 
 	PDH_acnt = 10000;
-	if (argc > 1)
+	if (argc > 1 && isdigit(argv[1]))
 	{
 		PDH_acnt = atoi(argv[1]);
 	}
 	
 	PDH_res = 500;
-	if (argc > 2)
+	if (argc > 2 && isdigit(argv[2]))
 	{
-		PDH_res	 = atof(argv[2]);	
+		PDH_res = atof(argv[2]);	
 	}
 
 	int blockSize = 64;
-	if (argc > 3)
+	if (argc > 3 && isdigit(argv[3]))
 	{
 		blockSize = atoi(argv[3]);
 	}
