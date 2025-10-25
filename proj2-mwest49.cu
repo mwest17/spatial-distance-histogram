@@ -520,11 +520,11 @@ int main(int argc, char **argv)
 
 	gpu_output_histogram();
 
-	// Running time output per rubric
-	printf("******** Total Running Time of Kernel = %f sec *******\n", elapsedTime / 1000.0);
-
 	/* Compare histograms between cpu and gpu */
 	compare_histograms(histogram, gpu_histogram);
+
+	// Running time output per rubric
+	printf("******** Total Running Time of Kernel = %f sec *******\n", elapsedTime / 1000.0);
 
 	return 0;
 }
