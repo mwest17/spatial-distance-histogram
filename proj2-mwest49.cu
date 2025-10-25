@@ -10,6 +10,8 @@
 #include <math.h>
 #include <sys/time.h>
 
+#include <ctype.h>
+
 
 #define BOX_SIZE	23000 /* size of the data box on one dimension            */
 #define ADDITION_CYCLES 73
