@@ -437,26 +437,49 @@ void compare_histograms(bucket *cpu_hist, bucket *gpu_hist) {
 }
 
 
+bool isNumerical(char* string) {
+	for (int i = 0; string[i] != '\0'; i++)
+	{
+		if (!isdigit(string[i]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 int main(int argc, char **argv)
 {
 	int i;
 
 	PDH_acnt = 10000;
-	if (argc > 1 && isdigit(argv[1]))
+	if (argc > 1 && isNumerical(argv[1]))
 	{
 		PDH_acnt = atoi(argv[1]);
 	}
+		else
+	{
+		printf("Expected numeric atom countargument\n");
+	}
 	
 	PDH_res = 500;
-	if (argc > 2 && isdigit(argv[2]))
+	if (argc > 2 && isNumerical(argv[2]))
 	{
 		PDH_res = atof(argv[2]);	
 	}
+	else
+	{
+		printf("Expected numeric bucket size argument\n");
+	}
 
 	int blockSize = 64;
-	if (argc > 3 && isdigit(argv[3]))
+	if (argc > 3 && isNumerical(argv[3]))
 	{
 		blockSize = atoi(argv[3]);
+	}
+		else
+	{
+		printf("Expected numeric block size argument\n");
 	}
 	
 // printf("args are %d and %f\n", PDH_acnt, PDH_res);
