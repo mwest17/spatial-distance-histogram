@@ -1,10 +1,3 @@
-/* ==================================================================
-	Programmer: Yicheng Tu (ytu@cse.usf.edu)
-	The basic SDH algorithm implementation for 3D data
-	To compile: nvcc SDH.c -o SDH in the GAIVI machines
-   ==================================================================
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -49,7 +42,9 @@ atom * atom_list;	    /* list of all data points                  */
 gpu_atom gpuAtoms;      /* list of data points in GPU's format      */
 double p[32]; 		    /* Probability of no collisions             */
 
-
+//##############################################################################
+// Supplied code:
+//############################################################################## 
 /* These are for an old way of tracking time */
 struct timezone Idunno;
 struct timeval startTime, endTime;

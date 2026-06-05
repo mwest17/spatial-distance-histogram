@@ -15,3 +15,9 @@ The current, optimized implementation achieves over a 3x speedup compared to the
 
 
 <img width="758" height="272" alt="Screenshot_20251023_235047" src="https://github.com/user-attachments/assets/79651371-62f2-4b35-8964-b4f1d95364c0" />
+
+
+The full report is included in this repo, called `spatial-distance-hist-report.pdf`. 
+
+# References
+This optimized implementation relied on the techniques described in A. Kumar, V. Grupcev, Y. Yuan, J. Huang, Y. -C. Tu and G. Shen, "Computing Spatial Distance Histograms for Large Scientific Data Sets On-the-Fly," in IEEE Transactions on Knowledge and Data Engineering, vol. 26, no. 10, pp. 2410-2424, Oct. 2014, doi: 10.1109/TKDE.2014.2298015
